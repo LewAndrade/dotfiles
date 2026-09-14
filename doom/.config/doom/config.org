@@ -982,6 +982,27 @@ cannot list a shell.
     (persp-add-buffer (current-buffer) (get-current-persp) nil nil)))
 #+end_src
 
+** Leaving insert state after a prompt
+
+A shell starts in insert state, because the mode derives from =comint-mode=.
+Sending with =RET= used to leave you there, so every localleader key needed an
+=ESC= first. Now the shell returns to normal state as soon as the prompt goes out,
+and =i= starts the next one.
+
+=RET= in this mode is plain =comint-send-input=, which every comint buffer uses, so
+the advice checks the major mode before it acts.
+
+#+begin_src emacs-lisp
+(defun my/agent-shell-normal-state-after-send (&rest _)
+  "Return to normal state once a prompt has been sent."
+  (when (and (derived-mode-p 'agent-shell-mode)
+             (bound-and-true-p evil-local-mode)
+             (evil-insert-state-p))
+    (evil-normal-state)))
+
+(advice-add 'comint-send-input :after #'my/agent-shell-normal-state-after-send)
+#+end_src
+
 ** Titles in the resume picker
 
 The title agent-shell receives over ACP is the session's first prompt, so the
