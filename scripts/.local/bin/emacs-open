@@ -1,0 +1,26 @@
+#!/bin/sh
+# Open a file in the running Emacs at LINE:COLUMN, then bring Emacs to the front.
+# Written for IntelliJ's External Tools, which calls:
+#   emacs-open $LineNumber$ $ColumnNumber$ $FilePath$
+set -eu
+
+if [ "$#" -ne 3 ]; then
+  echo "usage: emacs-open <line> <column> <file>" >&2
+  exit 2
+fi
+
+# IntelliJ starts tools with a minimal PATH, so prefer an absolute path.
+CLIENT=/opt/homebrew/bin/emacsclient
+if [ ! -x "$CLIENT" ]; then
+  CLIENT=$(command -v emacsclient) || {
+    echo "emacs-open: emacsclient not found" >&2
+    exit 1
+  }
+fi
+
+if ! "$CLIENT" -n "+$1:$2" "$3"; then
+  echo "emacs-open: no Emacs server. Start Emacs first." >&2
+  exit 1
+fi
+
+open -a Emacs
