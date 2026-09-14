@@ -414,6 +414,51 @@ buffer, so a buffer-local value set before =lsp!= runs is enough.
   lsp-enable-on-type-formatting t)
 #+end_src
 
+*** Jumping to IntelliJ and back
+
+Some things are still faster in IntelliJ, so =SPC o i= opens the current file
+there, at the current line and column.
+
+The arguments go to =call-process= one by one, never through a shell, so a path
+containing a space or a quote cannot break the command or run anything extra. The
+project directory goes first when projectile knows it, which makes IntelliJ open
+the file inside that project instead of as a loose temporary one.
+
+The launcher inside the app bundle is used when Toolbox has not put =idea= on
+PATH, which is the case here.
+
+#+begin_src emacs-lisp
+(defvar my/idea-executable
+  (or (executable-find "idea")
+      "/Applications/IntelliJ IDEA.app/Contents/MacOS/idea")
+  "The IntelliJ IDEA launcher.")
+
+(defun my/open-in-idea ()
+  "Open the current file in IntelliJ IDEA, at point."
+  (interactive)
+  (unless buffer-file-name
+    (user-error "This buffer is not visiting a file"))
+  (when (buffer-modified-p)
+    (save-buffer))
+  (let ((root (and (fboundp 'projectile-project-root)
+                   (projectile-project-root))))
+    (apply #'call-process my/idea-executable nil 0 nil
+           (append (when root (list (expand-file-name root)))
+                   ;; IntelliJ counts columns from one, `current-column' from zero.
+                   (list "--line" (number-to-string (line-number-at-pos))
+                         "--column" (number-to-string (1+ (current-column)))
+                         buffer-file-name)))))
+
+(map! :leader :desc "Open in IntelliJ" "o i" #'my/open-in-idea)
+#+end_src
+
+The return trip lives outside Emacs. =~/.local/bin/emacs-open= takes a line, a
+column and a file, hands them to =emacsclient=, and raises Emacs. IntelliJ calls
+it as an External Tool, defined in
+=~/Library/Application Support/JetBrains/IntelliJIdea2026.2/tools/External Tools.xml=,
+with the parameters =$LineNumber$ $ColumnNumber$ $FilePath$=. That file is not
+tracked here, because IntelliJ rewrites its own configuration directory.
+
 *** IntelliJ style generation and refactoring
 
 lsp-java ships the whole of IntelliJ's =Alt+Insert= and most of =Ctrl+Alt+M=, and
