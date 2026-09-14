@@ -12,6 +12,7 @@ My configuration files, one GNU Stow package per tool. macOS only.
 | `fish`     | `~/.config/fish`                    | Shell. Plugins come from fisher, not from here.|
 | `starship` | `~/.config/starship.toml`           | Prompt.                                        |
 | `git`      | `~/.gitconfig`, `~/.config/git`     | Identity stays out of this repo. See below.    |
+| `scripts`  | `~/.local/bin`                      | `org-backup` commits and pushes my org notes.  |
 
 ## Install
 
@@ -21,7 +22,7 @@ My configuration files, one GNU Stow package per tool. macOS only.
 
 ```sh
 cd ~/dotfiles
-stow --no-folding -t ~ doom nvim ghostty fish starship git
+stow --no-folding -t ~ doom nvim ghostty fish starship git scripts
 ```
 
 Link one package on its own with `stow --no-folding -t ~ doom`.

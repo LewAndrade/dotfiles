@@ -342,6 +342,56 @@ restores on demand. The result reads like rendered text but stays editable.
 Thin table rules suit the Maple Mono box drawing glyphs. =hl-todo-mode=
 highlights =TODO= keywords inside prose, not only in code.
 
+** Backing up the notes
+
+=~/Documents/org= is a git working tree of a private repository, and
+=~/.local/bin/org-backup= commits and pushes it. The schedule lives in Emacs
+rather than in launchd, because macOS privacy control refuses a launchd agent
+access to =~/Documents=, and the script dies with =Operation not permitted=.
+Emacs already holds that permission, so its child process inherits it.
+
+The first run is five minutes after startup, which covers notes written just
+before the last quit, and then every thirty minutes. =SPC n B= runs it now.
+Failures report in the echo area, and the log is =~/Library/Logs/org-backup.log=.
+
+#+begin_src emacs-lisp
+(defvar my/org-backup-script (expand-file-name "~/.local/bin/org-backup")
+  "Script that commits and pushes `org-directory'.")
+
+(defun my/org-backup ()
+  "Commit and push the org repository, in the background."
+  (interactive)
+  (when (file-executable-p my/org-backup-script)
+    (let ((buffer (get-buffer-create " *org-backup*")))
+      (with-current-buffer buffer (erase-buffer))
+      (make-process
+       :name "org-backup"
+       :buffer buffer
+       :noquery t
+       :command (list my/org-backup-script)
+       :sentinel
+       (lambda (proc _event)
+         (unless (process-live-p proc)
+           (unless (zerop (process-exit-status proc))
+             (message "org backup failed: %s"
+                      (string-trim (with-current-buffer (process-buffer proc)
+                                     (buffer-string)))))))))))
+
+;; Cancel first, so reloading this file does not stack a second timer and run two
+;; git processes at once. `defvar' keeps the old value, which is what cancels it.
+(defvar my/org-backup-timer nil)
+(when (timerp my/org-backup-timer)
+  (cancel-timer my/org-backup-timer))
+(setq my/org-backup-timer (run-at-time 300 1800 #'my/org-backup))
+
+(map! :leader :desc "Backup org notes" "n B" #'my/org-backup)
+#+end_src
+
+** Appearance
+
+Thin table rules suit the Maple Mono box drawing glyphs. =hl-todo-mode=
+highlights =TODO= keywords inside prose, not only in code.
+
 #+begin_src emacs-lisp
 (setq org-modern-table t
       org-modern-table-vertical 1)
