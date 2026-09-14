@@ -189,6 +189,45 @@ Doom handles the rest of vterm already: the popup at a quarter of the frame,
 in normal state. =SPC o t= toggles the popup, and =SPC o T= opens a terminal in
 the current directory.
 
+*** Closing a terminal popup with SPC b k
+
+Two Doom problems stack up here, and both are fixed below.
+
+First, killing the buffer asks =Buffer ... has a running process; kill it?=. Doom
+means to prevent that, and sets =confirm-kill-processes= to nil in
+=term/vterm/config.el:36=, but that variable only governs killing Emacs. The
+prompt comes from =process-kill-buffer-query-function=, which reads the process's
+own query flag. Clearing that flag is the working equivalent.
+
+Second, answering yes then fails with =Window ... is dedicated to buffer ...=.
+=SPC b k= is =kill-current-buffer=, which Doom advises with
+=doom--switch-to-fallback-buffer-maybe-a= at =doom-emacs.el:1087=. Since Doom
+registers =vterm-mode= as a real buffer, that advice takes its long path and calls
+=switch-to-prev-buffer= at =:1119=. Popup windows are dedicated with the symbol
+=popup= at =ui/popup/autoload/popup.el:160=, and =switch-to-prev-buffer= refuses a
+dedicated window. The advice's docstring promises to delete a dedicated window
+first, and its body never does.
+
+So in a popup, close the window and kill the buffer directly, and let the normal
+path run everywhere else.
+
+#+begin_src emacs-lisp
+(add-hook! 'vterm-mode-hook
+  (defun my/vterm-no-process-prompt-h ()
+    "Do not ask about the running shell when killing a vterm buffer."
+    (when-let* ((process (get-buffer-process (current-buffer))))
+      (set-process-query-on-exit-flag process nil))))
+
+(defadvice! my/kill-popup-buffer-a (&rest _)
+  "Close the popup window when killing its buffer, rather than reusing it."
+  :before-until #'kill-current-buffer
+  (when (and (fboundp '+popup-window-p) (+popup-window-p))
+    (let ((buffer (current-buffer)))
+      (+popup/close nil t)
+      (kill-buffer buffer)
+      t)))
+#+end_src
+
 Two neighbours worth naming, since they solve different problems:
 
 - =eat= is a terminal emulator written in elisp, so it needs no compiled module
