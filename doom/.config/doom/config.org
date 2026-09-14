@@ -106,7 +106,6 @@ compilation buffers stop scrolling at the first error.
 (setq read-process-output-max (* 1024 1024)
       history-length 300
       compilation-scroll-output 'first-error
-      shell-file-name (executable-find "bash")
       org-directory "~/Documents/org/")
 #+end_src
 
@@ -163,6 +162,41 @@ directory. =-l -i= runs =nvm use=, which costs about half a second at startup.
       exec-path-from-shell-arguments '("-l" "-i"))
 (exec-path-from-shell-initialize)
 #+end_src
+
+** Two shells, on purpose
+
+Emacs needs two different shells, and mixing them up causes strange failures.
+
+=shell-file-name= must stay POSIX, so it is bash. Emacs hands that shell
+generated command lines from =shell-command=, =compile=, =M-x grep= and TRAMP, and
+those use POSIX syntax. fish rejects a leading =VAR=value cmd= assignment
+outright, so a compile command can fail for a reason that has nothing to do with
+the code.
+
+=vterm-shell= is the interactive one, so it is fish, with the abbreviations,
+prompt and key bindings from =~/.config/fish=. Until this was set, vterm inherited
+=shell-file-name= and opened bash, which is why it felt unconfigured.
+
+#+begin_src emacs-lisp
+(setq shell-file-name (executable-find "bash"))
+
+(after! vterm
+  (setq vterm-shell (executable-find "fish")))
+#+end_src
+
+Doom handles the rest of vterm already: the popup at a quarter of the frame,
+5000 lines of scrollback, no modeline, no line numbers, and =dd= and =0= behaving
+in normal state. =SPC o t= toggles the popup, and =SPC o T= opens a terminal in
+the current directory.
+
+Two neighbours worth naming, since they solve different problems:
+
+- =eat= is a terminal emulator written in elisp, so it needs no compiled module
+  and works over TRAMP. Doom ships no module for it, and vterm is already built
+  and faster, so there is no reason to switch.
+- =eshell= is not a terminal at all. It is a shell implemented in Emacs, where
+  elisp functions are commands and buffers can be pipes. It cannot run fish, so
+  it complements fish rather than replacing it. The module is off.
 
 * Projects
 
