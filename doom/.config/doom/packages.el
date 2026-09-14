@@ -7,8 +7,9 @@
 ;;   3. Restart Emacs.
 ;; Use 'C-h f package\!' to look up documentation for the `package!' macro.
 
-(package! org-appear)
-(package! org-modern)
+;; org-appear and org-modern come from the `(org +pretty)' flag, which also
+;; enables them. Declaring them here left org-modern installed but never turned
+;; on, and unpinned.
 (package! treemacs-all-the-icons)
 (package! posframe)
 

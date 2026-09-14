@@ -359,22 +359,20 @@ dependency without sources.
 
 * Org mode
 
-Emphasis markers hide until the cursor enters the markup, which =org-appear=
-restores on demand. The result reads like rendered text but stays editable.
+The =+pretty= flag on the org module carries the appearance: =org-modern= draws
+headings as bullets, and styles tables, blocks, tags and TODO keywords;
+=org-appear= reveals markup when the cursor enters it. The flag installs both
+packages, pins them, and turns them on, so nothing here repeats that.
+
+These three are additions. =org-appear= reveals emphasis by default, but not
+subscripts or link targets.
 
 #+begin_src emacs-lisp
 (after! org
-  (setq org-hide-emphasis-markers t
-        org-appear-autoemphasis t
+  (setq org-appear-autoemphasis t
         org-appear-autosubmarkers t
         org-appear-autolinks t))
-
-(use-package! org-appear
-  :hook (org-mode . org-appear-mode))
 #+end_src
-
-Thin table rules suit the Maple Mono box drawing glyphs. =hl-todo-mode=
-highlights =TODO= keywords inside prose, not only in code.
 
 ** Backing up the notes
 
@@ -423,7 +421,8 @@ Failures report in the echo area, and the log is =~/Library/Logs/org-backup.log=
 
 ** Appearance
 
-Thin table rules suit the Maple Mono box drawing glyphs. =hl-todo-mode=
+Thin table rules suit the Maple Mono box drawing glyphs. These settings only
+started doing anything once =+pretty= enabled =org-modern=. =hl-todo-mode=
 highlights =TODO= keywords inside prose, not only in code.
 
 #+begin_src emacs-lisp
