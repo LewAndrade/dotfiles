@@ -69,7 +69,7 @@
        json              ; At least it ain't XML
        (kotlin +lsp +tree-sitter)       ; a better, slicker Java(Script)
        markdown          ; writing docs for people to ignore
-       (org +dragndrop +pretty)     ; organize your plain life in plain text
+       (org +dragndrop +pretty +present) ; organize your plain life in plain text
        (python +lsp +tree-sitter)       ; beautiful is better than ugly
        (sh +fish +lsp)   ; she sells {ba,z,fi}sh shells on the C xor
        (web +lsp)        ; the tubes

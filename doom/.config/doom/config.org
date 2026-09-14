@@ -374,6 +374,20 @@ subscripts or link targets.
         org-appear-autolinks t))
 #+end_src
 
+** Presenting from a buffer
+
+Some notes here are talks, so the =+present= flag is on. It adds three ways out
+of an org file, and needs no configuration.
+
+=SPC t p= starts =org-tree-slide-mode=, which turns the buffer into slides: one
+subtree per slide, text scaled up five steps, blocks hidden, inline images shown,
+and no modeline. =C-<right>= and =C-<left>= move between slides in normal state.
+=SPC t p= again returns to editing.
+
+=, e= opens the export dispatcher, which now offers reveal.js, through
+=org-re-reveal=, and beamer. reveal.js itself ships with the flag, so the exported
+HTML works offline.
+
 ** Backing up the notes
 
 =~/Documents/org= is a git working tree of a private repository, and
