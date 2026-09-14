@@ -251,26 +251,30 @@ inline as you move through the list.
 
 ** lsp-mode
 
-Signature help and documentation popups are off, because they fight corfu for the
-same screen space, and corfu owns completion. Indentation stays with Emacs, so
-the server does not reformat on every edit. =lsp-use-plists= needs its
-environment variable at build time, which Doom sets, and it cuts deserialization
-cost.
+Signature help stays off, because it fights corfu for the same screen space.
+Semantic tokens and inlay hints are on, since both are off by default and both
+pay for themselves in Java. The idle delay drops from half a second to almost
+nothing, which costs CPU and makes everything feel immediate. Indentation stays
+with Emacs, so the server does not reformat on every edit.
+
+Doom already sets four things that used to sit in this block, so they are gone:
+=lsp-headerline-breadcrumb-enable= and =lsp-enable-on-type-formatting= at
+=tools/lsp/+lsp.el:33-35=, =lsp-completion-provider= to =:none= whenever corfu is
+the completion module at =:148=, and =lsp-ui-peek-enable= at =:191=.
+=lsp-use-plists= was a no-op here as well: it is read at build time from an
+environment variable, which Doom sets in =tools/lsp/packages.el:20-24=.
 
 #+begin_src emacs-lisp
 (use-package! lsp-mode
   :commands lsp
   :config
-  (setq lsp-headerline-breadcrumb-enable nil
-        lsp-signature-render-documentation nil
+  (setq lsp-signature-render-documentation nil
         lsp-signature-function 'lsp-signature-posframe
         lsp-signature-auto-activate nil
-        lsp-completion-provider :none
         lsp-semantic-tokens-enable t
         lsp-enable-indentation nil
         lsp-inlay-hint-enable t
-        lsp-idle-delay 0.05
-        lsp-use-plists t)
+        lsp-idle-delay 0.05)
 #+end_src
 
 The default ignore list covers Maven =target= but not the Gradle generated
@@ -296,16 +300,18 @@ Saving after the edits keeps the buffers and the language server in agreement.
 
 ** lsp-ui and lsp-treemacs
 
-The doc and peek frames stay off, for the same reason as signature help. The
-error list narrows to the current project, which matters in a monorepo.
+The hover doc frame stays off, for the same reason as signature help: =K= shows
+documentation on demand instead. Peek is already off, because Doom ties it to the
+=+peek= flag, which is not enabled. Doom leaves the sideline on, with hover text
+suppressed. The error list narrows to the current project, which matters in a
+monorepo.
 
 #+begin_src emacs-lisp
 (use-package! lsp-ui
   :after lsp-mode
   :commands lsp-ui-mode
   :config
-  (setq lsp-ui-doc-enable nil
-        lsp-ui-peek-enable nil))
+  (setq lsp-ui-doc-enable nil))
 
 (use-package! lsp-treemacs
   :config
