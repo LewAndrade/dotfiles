@@ -439,9 +439,22 @@ Thin table rules suit the Maple Mono box drawing glyphs. These settings only
 started doing anything once =+pretty= enabled =org-modern=. =hl-todo-mode=
 highlights =TODO= keywords inside prose, not only in code.
 
+Headings show one bullet per level, which is the =replace= style. The default is
+=fold=, which draws triangles that flip open and closed, and two of its glyphs,
+=U+2BC8= and =U+2BC6=, exist in no font on this machine, so levels three and
+deeper showed an empty box with the codepoint in it.
+
+The five characters here are all inside =U+25xx=, which Maple Mono covers itself.
+That matters: org-modern's own fifth character is =✳=, =U+2733=, which falls
+through to Noto Emoji and arrives at a different weight and width. Check any
+replacement with =internal-char-font=, because =char-displayable-p= reports these
+missing glyphs as fine.
+
 #+begin_src emacs-lisp
 (setq org-modern-table t
-      org-modern-table-vertical 1)
+      org-modern-table-vertical 1
+      org-modern-star 'replace
+      org-modern-replace-stars "◉○◈◇◦")
 
 (add-hook 'org-mode-hook #'hl-todo-mode)
 #+end_src
