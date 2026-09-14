@@ -5,8 +5,15 @@ set -eu
 
 REPO="$HOME/Documents/org"
 BRANCH=master
+LOG="$HOME/Library/Logs/org-backup.log"
 
-log() { printf '%s  %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$*"; }
+mkdir -p "$(dirname "$LOG")"
+
+# git's own errors go to the log only. Every line from `log' goes to both, so a
+# caller such as Emacs sees the reason without opening the file.
+exec 2>>"$LOG"
+
+log() { printf '%s  %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$*" | tee -a "$LOG"; }
 
 cd "$REPO" || { log "ERROR no repository at $REPO"; exit 1; }
 
