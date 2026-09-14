@@ -1,0 +1,36 @@
+#!/bin/sh
+# Commit and push ~/Documents/org. Run every half hour by com.lew.org-backup,
+# and safe to run by hand. Logs to ~/Library/Logs/org-backup.log.
+set -eu
+
+REPO="$HOME/Documents/org"
+BRANCH=master
+
+log() { printf '%s  %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$*"; }
+
+cd "$REPO" || { log "ERROR no repository at $REPO"; exit 1; }
+
+if [ -n "$(git status --porcelain)" ]; then
+  git add -A
+  if ! git commit -q -m "notes: backup $(date '+%Y-%m-%d %H:%M')"; then
+    log "ERROR commit failed, most likely the signing key needs a passphrase"
+    exit 1
+  fi
+  log "committed $(git log -1 --format=%h)"
+fi
+
+# Rebase rather than merge, so notes from another machine stay in one line.
+if ! git pull -q --rebase origin "$BRANCH"; then
+  git rebase --abort 2>/dev/null || true
+  log "ERROR pull --rebase failed, resolve by hand"
+  exit 1
+fi
+
+if [ -n "$(git log "origin/$BRANCH..HEAD" --oneline)" ]; then
+  if git push -q origin "$BRANCH"; then
+    log "pushed"
+  else
+    log "ERROR push failed, will retry on the next run"
+    exit 1
+  fi
+fi
