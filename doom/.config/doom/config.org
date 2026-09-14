@@ -363,6 +363,63 @@ dependency without sources.
         lsp-java-content-provider-preferred "fernflower"))
 #+end_src
 
+=lsp-java-format-on-type-enabled= above only tells jdtls to offer the service.
+lsp-mode decides whether to ask for it, and Doom turns that off globally at
+=tools/lsp/+lsp.el:33=. Turning it back on for Java buffers alone keeps
+IntelliJ's behaviour where typing =}= or =;= tidies the line, and leaves every
+other language as Doom intends. lsp-mode reads the value when it configures a
+buffer, so a buffer-local value set before =lsp!= runs is enough.
+
+#+begin_src emacs-lisp
+(setq-hook! '(java-mode-local-vars-hook java-ts-mode-local-vars-hook)
+  lsp-enable-on-type-formatting t)
+#+end_src
+
+*** IntelliJ style generation and refactoring
+
+lsp-java ships the whole of IntelliJ's =Alt+Insert= and most of =Ctrl+Alt+M=, and
+Doom binds none of it. These three menus cover it.
+
+Two notes on the mechanics. The bindings name both keymaps, because =.java= opens
+in =java-ts-mode= through =major-mode-remap-defaults=, while =java-mode-map= still
+applies if the grammar is ever missing. Both =require= calls exist because either
+keymap can be unbound when lsp-java loads, and =map!= needs the symbol.
+
+Doom's own Java keys, =, t t= and friends for tests, are bound to =java-mode-map=
+only, so they do not exist in a =java-ts-mode= buffer at all. They stay
+unbound here until the test runner question is settled, because they call
+=dap-java=, and this Doom fork ships dape instead.
+
+#+begin_src emacs-lisp
+(after! lsp-java
+  (require 'cc-mode)
+  (require 'java-ts-mode)
+  (map! :map (java-mode-map java-ts-mode-map)
+        :localleader
+        (:prefix ("g" . "generate")
+         :desc "Getters and setters"   "g" #'lsp-java-generate-getters-and-setters
+         :desc "toString"              "s" #'lsp-java-generate-to-string
+         :desc "equals and hashCode"   "e" #'lsp-java-generate-equals-and-hash-code
+         :desc "Overrides"             "o" #'lsp-java-generate-overrides
+         :desc "Unimplemented methods" "u" #'lsp-java-add-unimplemented-methods)
+        (:prefix ("r" . "refactor")
+         :desc "Extract method"        "m" #'lsp-java-extract-method
+         :desc "Extract to variable"   "v" #'lsp-java-extract-to-local-variable
+         :desc "Extract to constant"   "c" #'lsp-java-extract-to-constant
+         :desc "Inline"                "i" #'lsp-java-inline
+         :desc "Organize imports"      "o" #'lsp-java-organize-imports
+         :desc "Add import"            "a" #'lsp-java-add-import)
+        (:prefix ("j" . "project")
+         :desc "Build project"         "b" #'lsp-java-build-project
+         :desc "Update configuration"  "u" #'lsp-java-update-project-configuration
+         :desc "Type hierarchy"        "h" #'lsp-java-type-hierarchy
+         :desc "Open super method"     "s" #'lsp-java-open-super-implementation)))
+#+end_src
+
+A side effect worth knowing: until now =,= in a Java buffer ran
+=evil-snipe-repeat-reverse=, because no Java localleader existed. It is the
+localleader from now on, which matches every other mode here.
+
 * Org mode
 
 The =+pretty= flag on the org module carries the appearance: =org-modern= draws
