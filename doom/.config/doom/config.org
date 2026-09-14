@@ -22,38 +22,13 @@
 Two sections carry most of the weight: [[*Language servers]] for the Java setup, and
 [[*AI coding]] for how Claude Code runs inside Emacs.
 
-* How this file works
-
-This file is the source of truth for =config.el=. Every =emacs-lisp= block below
-tangles into that file, in document order.
-
-Do not edit =config.el=. The next tangle overwrites it.
-
-The tangle target is absolute, =~/.config/doom/config.el=, and that matters.
-This file is a symlink from a stow package, so Emacs resolves it to the repository
-directory. A relative target would write the tangled file there, next to the org
-file, and Doom would keep loading a stale =config.el=.
-
-Three things trigger a tangle:
-
-1. Saving any org file inside =~/.config/doom/=. The tangle runs in a background
-   Emacs process, and the echo area reports the result.
-2. Running =doom sync=. The =:config literate= module tangles before the sync
-   reads your packages.
-3. Running =org-babel-tangle= (=C-c C-v t=) by hand.
-
-Two files stay hand written, because Doom reads them before the tangle hook
-runs:
-
-- =init.el= holds the module list. A tangled version of it lags one sync behind.
-- =custom.el= belongs to Emacs itself.
-
-Useful commands: =SPC h r r= reloads the config, and =+literate/find-heading=
-jumps to any heading in this file.
+Edit this file, never =config.el=. Doom tangles every block below into
+=~/.config/doom/config.el=, in document order, when you save and before every
+=doom sync=. The target is absolute because this file is a symlink from a stow
+package, and a relative one would write next to it in the repository. =init.el=
+and =custom.el= stay hand written, because Doom reads them first.
 
 ** File header
-
-Doom loads this file directly, so it needs the lexical binding cookie.
 
 #+begin_src emacs-lisp
 ;;; config.el -*- lexical-binding: t; -*-
@@ -72,22 +47,47 @@ with =:localleader= reads the value at load time.
 (setq doom-localleader-key ",")
 #+end_src
 
-** Theme and line numbers
+** Theme
 
-The light theme is the default. =SPC t d= switches to the dark one, described in
-[[*Theme toggle]].
+Solarized Light by default, because most of my day is in a bright room. =SPC t d=
+switches to Peacock, which is set up in [[*Theme toggle]].
 
 #+begin_src emacs-lisp
-(setq doom-theme 'doom-solarized-light
-      doom-themes-treemacs-theme "all-the-icons"
-      display-line-numbers-type t)
+(setq doom-theme 'doom-solarized-light)
 #+end_src
 
-** Fewer prompts and less chrome
+** Line numbers
+
+=t= means absolute numbers. =relative= and =visual= are the other choices, and
+=SPC t l= cycles them off and on.
+
+#+begin_src emacs-lisp
+(setq display-line-numbers-type t)
+#+end_src
+
+** Evil behavior
+
+New splits open below and to the right, so the new window appears where the eye
+already is. evil also gets the minibuffer, which means normal state editing
+there.
+
+Pasting over a visual selection no longer pushes the replaced text onto the kill
+ring. Without that, a second paste of the same text pastes what you just deleted,
+which breaks replacing several selections in a row.
+
+#+begin_src emacs-lisp
+(setq evil-split-window-below t
+      evil-vsplit-window-right t
+      evil-collection-setup-minibuffer t)
+
+(setq-default evil-kill-on-visual-paste nil)
+#+end_src
+
+** Fewer interruptions
 
 Emacs asks to confirm a quit, and it echoes tooltip help for whatever the mouse
-touches. Both interrupt work, so both go away. The help settings also keep the
-echo area free for real messages.
+touches. Both interrupt work, and the help settings also keep the echo area free
+for real messages.
 
 #+begin_src emacs-lisp
 (setq confirm-kill-emacs nil
@@ -95,72 +95,33 @@ echo area free for real messages.
       show-help-function nil)
 #+end_src
 
-** History and compilation
+** Throughput, history and paths
 
-A longer history makes =SPC := and the minibuffer rings more useful across a
-long session. In compilation buffers, scrolling stops at the first error instead
-of running to the end of the output.
-
-#+begin_src emacs-lisp
-(setq history-length 300
-      compilation-scroll-output 'first-error)
-#+end_src
-
-** Subprocess throughput
-
-The default read chunk is 4 KB. Language servers and agent processes send far
-more than that per message, so a 1 MB buffer cuts the number of reads.
+The default process read chunk is 4 KB. Language servers and agent processes send
+far more than that per message, so a 1 MB buffer cuts the number of reads. A
+longer history makes the minibuffer rings useful across a long session, and
+compilation buffers stop scrolling at the first error.
 
 #+begin_src emacs-lisp
-(setq read-process-output-max (* 1024 1024))
-#+end_src
-
-** Window splits
-
-New splits open below and to the right, so the new window appears where the eye
-already is. =evil-collection= also takes over the minibuffer, which gives normal
-state editing there.
-
-#+begin_src emacs-lisp
-(setq evil-split-window-below t
-      evil-vsplit-window-right t
-      evil-collection-setup-minibuffer t)
-#+end_src
-
-** Paste over a visual selection
-
-By default evil pushes the replaced text onto the kill ring, so a second paste
-of the same text pastes what you just deleted. Turning this off makes repeated
-paste over several selections work.
-
-#+begin_src emacs-lisp
-(setq-default evil-kill-on-visual-paste nil)
-#+end_src
-
-** Shell and org root
-
-#+begin_src emacs-lisp
-(setq shell-file-name (executable-find "bash")
+(setq read-process-output-max (* 1024 1024)
+      history-length 300
+      compilation-scroll-output 'first-error
+      shell-file-name (executable-find "bash")
       org-directory "~/Documents/org/")
 #+end_src
 
-** Treemacs width
+** Treemacs
 
-Unlocking the width allows a manual resize of the treemacs window.
-
-#+begin_src emacs-lisp
-(setq treemacs-width-is-initially-locked nil)
-#+end_src
+Doom shows treemacs on the right, and the popup rule moves the scoped workspace
+variant back to the left. Unlocking the width allows a manual resize.
 
 #+begin_src emacs-lisp
+(setq treemacs-width-is-initially-locked nil
+      doom-themes-treemacs-theme "all-the-icons")
+
 (use-package! treemacs-all-the-icons
   :after treemacs)
-#+end_src
 
-Doom shows treemacs on the right by default. This rule moves the scoped
-workspace variant back to the left.
-
-#+begin_src emacs-lisp
 (set-popup-rule! "\\*Treemacs-Scoped.*\\*" :side 'left :width 0.2)
 #+end_src
 
@@ -233,8 +194,15 @@ decide the root.
 
 * Completion
 
-A wider popup fits Java symbol names. Preselecting the first candidate makes
-=RET= accept the obvious match.
+Two different things complete, and only one is configured here. vertico completes
+in the minibuffer, which is =M-x=, =SPC f f= and every other prompt. corfu is the
+popup that appears while you type in a buffer. Both arrive through =init.el=, and
+orderless lets you type the parts of a name in any order.
+
+All four settings below are corfu. The popup is at least 30 columns wide, because
+Java symbol names are long. It appears after 0.1 seconds. The first candidate is
+preselected, so =RET= takes the obvious match, and that candidate is previewed
+inline as you move through the list.
 
 #+begin_src emacs-lisp
 (use-package! corfu
@@ -383,101 +351,41 @@ highlights =TODO= keywords inside prose, not only in code.
 
 * Keybindings
 
-Everything here is an addition to Doom's defaults. The AI keys live in their own
-tables under [[*Keys]].
+Most of what used to live here already existed in Doom, so it went away:
 
-| Key                     | Does                                        | State           |
-|-------------------------+---------------------------------------------+-----------------|
-| =M-r=                   | Edit every match of the symbol at point     | normal, visual  |
-| =TAB=                   | Jump to the matching bracket                | normal          |
-| =] e=, =[ e=            | Next, previous flycheck error               | motion          |
-| =C-<arrow>=             | Move to the window in that direction        | normal          |
-| =C-S-<arrow>=           | Resize the window by five columns or lines  | normal, visual, insert |
-| =C-S-M-<up>=, =C-S-M-<down>= | Scroll the window below, from here     | normal, visual, insert |
-| =M-l=                   | Start a language server in this buffer      | normal          |
-| =SPC c f=               | Format the buffer with lsp                  | leader          |
-| =SPC -=                 | Comment this line                           | leader          |
-| =SPC t=                 | Toggles: numbers, highlight, treemacs, vterm, dark mode | leader |
-| =SPC o v=               | Open vterm in this directory                | leader          |
+| Instead of                     | Doom already has                                        |
+|--------------------------------+---------------------------------------------------------|
+| Arrow chords for windows       | =C-w h j k l= to move, =SPC w + - < > == to resize        |
+| =M-r= for multiedit            | =R= in visual state, or =M-d= to add matches one at a time |
+| =TAB= for the matching bracket | =%=, while =TAB= keeps snippets and folding              |
+| =M-l= to start lsp             | lsp starts itself, and =SPC c l= is the whole lsp map     |
+| =SPC o v= for vterm            | =SPC o t= toggles it, =SPC o T= opens it here             |
 
-The arrow chords also work in insert state, so a resize never needs a trip
-through normal state.
+Window movement is =C-w= followed by =h j k l=. Doom also accepts =C-w C-h= and so
+on, so the control key can stay down. Bare =C-h= remains help.
 
-** Editing and navigation
+What is left is mine:
+
+| Key                  | Does                                    | Where  |
+|----------------------+-----------------------------------------+--------|
+| =] e=, =[ e=         | Next, previous flycheck error           | motion |
+| =SPC -=              | Comment this line                       | leader |
+| =SPC c f=            | Format with lsp                         | leader |
+| =SPC t h=, =SPC t H= | Highlight this line, here or everywhere | leader |
+| =SPC t m=            | =markdown-view-mode=                    | leader |
+| =SPC t t=            | Truncate long lines                     | leader |
+| =SPC t T=            | treemacs                                | leader |
+| =SPC t D=            | Dark theme                              | leader |
+
+=SPC t D= is uppercase because =SPC t d= is Doom's =diff-hl-mode=. =SPC t l= is
+gone for the same reason: it was Doom's own line number toggle, bound a second
+time.
+
+** Errors
 
 #+begin_src emacs-lisp
-(define-key evil-normal-state-map (kbd "M-r") 'evil-multiedit-match-all)
-(define-key evil-normal-state-map (kbd "<tab>") 'evil-jump-item)
 (define-key evil-motion-state-map (kbd "] e") #'flycheck-next-error)
 (define-key evil-motion-state-map (kbd "[ e") #'flycheck-previous-error)
-
-(map! :nv
-      :desc "Evil multiedit word"
-      "M-r" #'evil-multiedit-match-all)
-#+end_src
-
-** Scrolling another window
-
-Code on top, a test or compilation buffer below: these scroll the lower window
-without leaving the code. The target must span the full frame width, which is how
-Doom lays out popups.
-
-#+begin_src emacs-lisp
-(defun scroll-up-bottom-window ()
-  "Scroll up bottom window"
-  (interactive)
-  (save-selected-window
-    (when-let ((bottom-window (-first (lambda (w)
-                                        (and (window-full-width-p w)
-                                             (not (eq w (get-buffer-window))))) (window-list))))
-      (select-window bottom-window)
-      (scroll-up-line))))
-
-(defun scroll-down-bottom-window ()
-  "Scroll down bottom window"
-  (interactive)
-  (save-selected-window
-    (when-let ((bottom-window (-first (lambda (w)
-                                        (and (window-full-width-p w)
-                                             (not (eq w (get-buffer-window))))) (window-list))))
-      (select-window bottom-window)
-      (scroll-down-line))))
-#+end_src
-
-** Window size and movement
-
-#+begin_src emacs-lisp
-(map! :nvi
-      :desc "increase window width"
-      "C-S-<left>" (lambda () (interactive) (enlarge-window 5 t))
-
-      :desc "decrease window width"
-      "C-S-<right>" (lambda () (interactive) (enlarge-window -5 t))
-
-      :desc "increase window height"
-      "C-S-<down>" (lambda () (interactive) (enlarge-window 5))
-
-      :desc "decrease window height"
-      "C-S-<up>" (lambda () (interactive) (enlarge-window -5))
-
-      :desc "scroll up bottom window"
-      "C-S-M-<down>" #'scroll-up-bottom-window
-
-      :desc "scroll down bottom window"
-      "C-S-M-<up>" #'scroll-down-bottom-window)
-
-(map! :n
-      :desc "Move to window on right"
-      "C-<right>" #'evil-window-right
-
-      :desc "Move to window on left"
-      "C-<left>" #'evil-window-left
-
-      :desc "Move to window on top"
-      "C-<up>" #'evil-window-up
-
-      :desc "Move to window on bottom"
-      "C-<down>" #'evil-window-down)
 #+end_src
 
 ** Language server keys
@@ -487,38 +395,28 @@ sometimes picks a different formatter.
 
 #+begin_src emacs-lisp
 (map! :after lsp-mode
-      :map lsp-mode-map
-      :n
-
-      :desc "Start lsp on buffer"
-      "M-l" #'lsp
-
       :leader
-
       :desc "Format workaround"
       "c f" #'lsp-format-buffer)
 #+end_src
 
 ** Leader additions
 
+Write these as full key sequences, never as =(:prefix ("t" . "toggle") ...)=. That
+wrapper builds a fresh keymap and binds it over =SPC t=, which throws away every
+toggle Doom put there. The same mistake under =SPC o= hid Doom's whole open menu,
+including =SPC o t= for vterm.
+
 #+begin_src emacs-lisp
 (map! :leader
-      :desc "Comment line" "-" #'comment-line)
+      :desc "Comment line" "-" #'comment-line
 
-(map! :leader
-      (:prefix ("t" . "toggle")
-       :desc "Toggle line highlight in frame" "h" #'hl-line-mode
-       :desc "Toggle line highlight globally" "H" #'global-hl-line-mode
-       :desc "Toggle line numbers"            "l" #'doom/toggle-line-numbers
-       :desc "Toggle markdown-view-mode"      "m" #'dt/toggle-markdown-view-mode
-       :desc "Toggle truncate lines"          "t" #'toggle-truncate-lines
-       :desc "Toggle treemacs"                "T" #'+treemacs/toggle
-       :desc "Toggle vterm split"             "v" #'+vterm/toggle
-       :desc "Toggle dark mode"               "d" #'my/toggle-theme))
-
-(map! :leader
-      (:prefix ("o" . "open here")
-       :desc "Open vterm here"     "v" #'+vterm/here))
+      :desc "Highlight line here"      "t h" #'hl-line-mode
+      :desc "Highlight line globally"  "t H" #'global-hl-line-mode
+      :desc "markdown-view-mode"       "t m" #'dt/toggle-markdown-view-mode
+      :desc "Truncate lines"           "t t" #'toggle-truncate-lines
+      :desc "Treemacs"                 "t T" #'+treemacs/toggle
+      :desc "Dark theme"               "t D" #'my/toggle-theme)
 #+end_src
 
 * Utility functions
