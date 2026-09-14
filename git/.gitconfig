@@ -1,0 +1,6 @@
+# Identity and signing key live in ~/.gitconfig.local, which is not tracked.
+[include]
+	path = ~/.gitconfig.local
+
+[commit]
+	gpgsign = true
