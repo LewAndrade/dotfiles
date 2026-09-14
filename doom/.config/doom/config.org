@@ -374,6 +374,29 @@ subscripts or link targets.
         org-appear-autolinks t))
 #+end_src
 
+** Showing images in the document
+
+Org 9.8 renamed inline images to link previews, and
+=org-startup-with-link-previews= decides whether they appear when a file opens.
+It ships as nil, so a buffer shows the raw =attachment:= link unless the file
+carries =#+startup: inlineimages=.
+
+That explains an odd asymmetry: images appeared while presenting and in the
+reveal.js export, but not in the document. The =+present= flag hooks
+=org-display-inline-images= onto every slide change, so slides ask for previews
+explicitly, and the document never did.
+
+A width matters too. With =org-image-actual-width= at nil, a screenshot displays
+at its real pixel size and runs past the window edge. A list holding one number
+means: honour an =#+ATTR_ORG: :width= line when the file gives one, and otherwise
+use 600 pixels.
+
+#+begin_src emacs-lisp
+(after! org
+  (setq org-startup-with-link-previews t
+        org-image-actual-width '(600)))
+#+end_src
+
 ** Presenting from a buffer
 
 Some notes here are talks, so the =+present= flag is on. It adds three ways out
@@ -387,6 +410,38 @@ and no modeline. =C-<right>= and =C-<left>= move between slides in normal state.
 =, e= opens the export dispatcher, which now offers reveal.js, through
 =org-re-reveal=, and beamer. reveal.js itself ships with the flag, so the exported
 HTML works offline.
+
+*** Working around a Doom bug in mode-line-invisible-mode
+
+Presenting makes an org buffer impossible to close, with =Wrong number of
+arguments: (var local val), 2=.
+
+The chain runs like this. =org-tree-slide-mode= hides the modeline through
+=mode-line-invisible-mode=, which saves =(VAR LOCAL VAL)= so it can restore the
+modeline later. When it restores, Doom writes the result of that restore back
+into the same variable, so the variable ends up holding =mode-line-format=
+itself, a two element list. The next time the mode turns off, destructuring two
+elements into three arguments fails. That happens inside a =kill-buffer-hook=, so
+the buffer cannot be killed.
+
+This advice throws away a saved state that does not have the expected shape. It
+leaves a correct state alone, so it does nothing once Doom fixes the missing
+=nil=. The same mode hides the modeline in vterm, so this is not only about
+presentations.
+
+#+begin_src emacs-lisp
+(defun my/mode-line-invisible-drop-bad-state (&rest _)
+  "Discard a malformed `mode-line-invisible--buf-state'."
+  (when (and (boundp 'mode-line-invisible--buf-state)
+             mode-line-invisible--buf-state
+             (not (and (consp mode-line-invisible--buf-state)
+                       (= 3 (length mode-line-invisible--buf-state))
+                       (symbolp (car mode-line-invisible--buf-state)))))
+    (setq mode-line-invisible--buf-state nil)))
+
+(advice-add 'mode-line-invisible-mode :before
+            #'my/mode-line-invisible-drop-bad-state)
+#+end_src
 
 ** Backing up the notes
 
@@ -450,11 +505,35 @@ through to Noto Emoji and arrives at a different weight and width. Check any
 replacement with =internal-char-font=, because =char-displayable-p= reports these
 missing glyphs as fine.
 
+The =fold= style is kept, with its broken third pair replaced, so =SPC t B=
+switches between the two. Every glyph in both sets comes from Maple Mono.
+
 #+begin_src emacs-lisp
 (setq org-modern-table t
       org-modern-table-vertical 1
       org-modern-star 'replace
-      org-modern-replace-stars "◉○◈◇◦")
+      org-modern-replace-stars "◉○◈◇◦"
+      ;; Third pair replaced: org-modern ships ⯈ and ⯆, U+2BC8 and U+2BC6.
+      org-modern-fold-stars '(("▶" . "▼")
+                              ("▷" . "▽")
+                              ("▸" . "▾")
+                              ("▹" . "▿")
+                              ("▪" . "▫")))
+
+(defun my/org-modern-toggle-stars ()
+  "Switch org-modern headings between one bullet per level and fold arrows."
+  (interactive)
+  (setq org-modern-star (if (eq org-modern-star 'replace) 'fold 'replace))
+  (dolist (buffer (buffer-list))
+    (with-current-buffer buffer
+      (when (and (derived-mode-p 'org-mode)
+                 (bound-and-true-p org-modern-mode))
+        (org-modern-mode -1)
+        (org-modern-mode 1))))
+  (message "org-modern headings: %s"
+           (if (eq org-modern-star 'replace) "bullets" "fold arrows")))
+
+(map! :leader :desc "Org heading bullets" "t B" #'my/org-modern-toggle-stars)
 
 (add-hook 'org-mode-hook #'hl-todo-mode)
 #+end_src
