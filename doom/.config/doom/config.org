@@ -900,14 +900,18 @@ for, and the letters are free to mean different things in each.
 Six ways to start, because the root directory decides which project the agent
 sees, and the resume picker groups by that root.
 
-| Key       | Command                       | Use it when                                        |
-|-----------+-------------------------------+----------------------------------------------------|
-| =SPC l l= | =agent-shell=                 | Default. Reuse the shell for here, or start one    |
-| =SPC l a= | =my/agent-shell-dev=          | Everyday choice. New shell at =~/Dev=, flat list   |
-| =SPC l A= | =agent-shell-new-shell=       | The work is one project, and the root must match it |
-| =SPC l d= | =my/agent-shell-in-dir=       | The root is somewhere else entirely                |
-| =SPC l w= | =agent-shell-new-worktree-shell= | The agent must not touch your working tree      |
-| =SPC l m= | =my/agent-shell-select-agent= | You want Codex, Gemini or opencode instead         |
+| Key       | Command                            | Use it when                                         |
+|-----------+------------------------------------+-----------------------------------------------------|
+| =SPC l l= | =agent-shell=                      | Default. Reuse the shell for here, or start one     |
+| =SPC l a= | =my/agent-shell-dev=               | Everyday choice. New shell at =~/Dev=, flat list    |
+| =SPC l A= | =agent-shell-new-shell=            | The work is one project, and the root must match it |
+| =SPC l d= | =my/agent-shell-in-dir=            | The root is somewhere else entirely                 |
+| =SPC l o= | =my/agent-shell-opencode-dev=      | Same as =SPC l a=, but GPT through OpenCode         |
+| =SPC l O= | =agent-shell-opencode-start-agent= | Same as =SPC l A=, but GPT through OpenCode         |
+| =SPC l m= | =my/agent-shell-select-agent=      | Any of the other seventeen agents                   |
+
+Lowercase starts at =~/Dev=, uppercase starts where you are: =a= / =A= for Claude,
+=o= / =O= for OpenCode. =SPC l w= for worktree shells is gone, unused.
 
 *** Shells that are open
 
@@ -968,8 +972,9 @@ two views of one session. It does not cycle between sessions.
 =~/Dev= is the default root on purpose. The resume picker groups sessions by
 their root, so one shared root keeps every session in a single flat list.
 
-All three commands pass a prefix argument, which forces a new shell instead of a
-switch to an existing one.
+The Claude commands pass a prefix argument, which forces a new shell instead of a
+switch to an existing one. The OpenCode entry point needs no equivalent, because
+=agent-shell-opencode-start-agent= already passes =:new-shell t= itself.
 
 #+begin_src emacs-lisp
 (defun my/agent-shell-dev ()
@@ -978,6 +983,13 @@ switch to an existing one.
   (require 'agent-shell)
   (let ((default-directory (expand-file-name "~/Dev/")))
     (agent-shell '(4))))
+
+(defun my/agent-shell-opencode-dev ()
+  "Start an OpenCode agent shell rooted at `~/Dev'."
+  (interactive)
+  (require 'agent-shell)
+  (let ((default-directory (expand-file-name "~/Dev/")))
+    (agent-shell-opencode-start-agent)))
 
 (defun my/agent-shell-in-dir (dir)
   "Start an agent shell in DIR."
@@ -1989,8 +2001,10 @@ Bindings first, then the settings. The tables above describe what these keys do.
          :desc "new in ~/Dev"             "a" #'my/agent-shell-dev
          :desc "new in directory…"        "d" #'my/agent-shell-in-dir
          :desc "new in project"           "A" #'agent-shell-new-shell
-         :desc "new in worktree"          "w" #'agent-shell-new-worktree-shell
          :desc "new with another agent"   "m" #'my/agent-shell-select-agent
+
+         :desc "opencode in ~/Dev"        "o" #'my/agent-shell-opencode-dev
+         :desc "opencode in project"      "O" #'agent-shell-opencode-start-agent
 
          :desc "switch to a shell"        "b" #'agent-shell-switch-buffer
          :desc "shells, sidebar"          "h" #'agent-shell-hq-toggle
@@ -2127,8 +2141,10 @@ already speaks =opencode acp=, none of the three solve per-agent models either
 =M-x opencode= and so collide with each other, and all of them re-implement the
 session list, transcript and diff review that hq and agent-recall already provide.
 
-Launch with =SPC l m= and pick =opencode=, one of the nineteen agents agent-shell
-offers. Switching model mid-session is =, v=, the same key as for Claude.
+Launch with =SPC l o= for a shell at =~/Dev=, or =SPC l O= to start where you
+already are, mirroring =SPC l a= and =SPC l A= for Claude. =SPC l m= still reaches
+it, and the other seventeen agents, through the picker. Switching model
+mid-session is =, v=, the same key as for Claude.
 
 It is worth knowing *why* that works, because the session state suggests it should
 not: OpenCode leaves =(:session :models)= empty and does not advertise the ACP
