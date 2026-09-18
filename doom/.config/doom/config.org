@@ -2128,9 +2128,17 @@ already speaks =opencode acp=, none of the three solve per-agent models either
 session list, transcript and diff review that hq and agent-recall already provide.
 
 Launch with =SPC l m= and pick =opencode=, one of the nineteen agents agent-shell
-offers. Switching model mid-session is =, s= then Model, **not** =, v=: OpenCode
-does not advertise the ACP =set-model= capability, so the model lives in the
-session's config options instead. =, v= remains the Claude path.
+offers. Switching model mid-session is =, v=, the same key as for Claude.
+
+It is worth knowing *why* that works, because the session state suggests it should
+not: OpenCode leaves =(:session :models)= empty and does not advertise the ACP
+=set-model= capability. But =agent-shell--get-available-models= prefers a config
+option of category ="model"= and only falls back to =(:session :models)=, and
+=agent-shell-set-session-model= writes through
+=agent-shell--config-option-set-model-id= rather than calling =session/set_model=.
+So both the read and the write go through config options, which OpenCode does
+provide. =, s= reaches the same option the long way, by listing every config
+option first.
 
 Nothing about this is in Emacs config, so there is nothing to tangle. It is
 recorded here because none of it is discoverable from the machine afterwards.
@@ -2237,6 +2245,31 @@ one piece of evidence available, that the Wise plugin picks it as its own
 To confirm routing really reaches the subagents, ask a session to spawn one of
 each with a fake task and report the model from its own runtime context. Config
 that looks right and routing that works are different things.
+
+**Changing any of it.** Edit the =agent= block and restart the shell; the config is
+read at session start. Both providers are authenticated, so any agent can take any
+id =opencode models= lists, in four families:
+
+| Prefix                      | Provider | Auth           |
+|-----------------------------+----------+----------------|
+| =openai/=                   | GPT      | ChatGPT OAuth  |
+| =wise-llm-gateway/claude-=  | Claude   | gateway / Okta |
+| =wise-llm-gateway-gemini/=  | Gemini   | gateway / Okta |
+| =wise-llm-gateway-bedrock/= | Mistral  | gateway / Okta |
+
+Claude ids are =claude-opus-5=, =claude-4-8-opus=, =claude-4-7-opus=,
+=claude-4-6-opus=, =claude-5-sonnet=, =claude-4-6-sonnet=, =claude-4-5-haiku=.
+
+So to have Astra plan and Sonnet carry the plan out:
+
+#+begin_example
+"plan":  { "model": "openai/gpt-6-astra" },
+"build": { "model": "wise-llm-gateway/claude-5-sonnet" },
+#+end_example
+
+A per-project =opencode.json= in a repo root overrides the global one, which is how
+to give one repo a different split without touching the rest. For a one-off, skip
+the file entirely and use =, v= in the session.
 
 =autoupdate= is ="notify"= because OpenCode's self-updater does not pass
 =--allow-build= and would break its own install.
