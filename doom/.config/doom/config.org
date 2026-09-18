@@ -2168,6 +2168,15 @@ Evil and other packages:
   its queue commands, so the key is dead until rebound.
 - =agent-recall-search-paths= defaults to nil, and reindexing needs it.
 
+OpenCode:
+
+- The first session after installing stalls. Initialisation completes, the prompt
+  appears, but no session is created and submitting says "Busy, please wait".
+  Restarting the shell fixes it permanently; it is first-run state setup.
+- OpenCode's ACP session capabilities are =close, fork, list, resume= with **no
+  =delete=**, unlike Claude's. Session deletion therefore has to work by removing
+  files, which is what [[*Discarding a session][the delete command]] already does.
+
 ** Extensions that lost
 
 Thirteen extensions were tried on 2026-09-12. The reasons are recorded because
