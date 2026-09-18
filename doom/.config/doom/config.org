@@ -2114,6 +2114,264 @@ perspective blocks =projectile-find-file= inside the workspace.
 it in a commentary header. Nothing fails loudly without it, the index simply
 stops growing, which then looks like a bug in labelling rather than in indexing.
 
+** Gemini through gptel
+
+gptel is not an agent. It ships zero tools, so it cannot read the repo, edit
+files or run commands, and it is not a smaller Claude Code. It earns its place by
+covering the two things agent-shell has no answer for: rewriting a region in
+place with a diff to accept or reject, and answering a question without starting
+a session at all.
+
+| Key              | Does                                     | Use it when                              |
+|------------------+------------------------------------------+------------------------------------------|
+| =C-c <return>=   | Ask; answer in a popup, buffer untouched | A question needing no repo access        |
+| =C-c C-<return>= | The hub: model, directive, destination   | The default is wrong, just this once     |
+| =SPC l g g=      | Chat buffer, Org, keeps history          | Follow-ups matter                        |
+| =SPC l g s=      | Send, inserting the answer at point      | The text belongs in the file             |
+| =SPC l g r=      | Rewrite the region, with a diff          | A message must get shorter or plainer    |
+| =SPC l g a= =f=  | Attach a region or file as context       | The question is about code it cannot see |
+| =SPC l g d=      | Swap the directive                       | This thread wants prose, or code         |
+| =SPC l g k=      | Abort the pending request                | It is slow, or you changed your mind     |
+
+Note the key names: =C-c <return>= and =C-c RET= are *different keys* in Emacs,
+and which-key renders them alike. Everything above means the physical Return key.
+
+Inside a chat buffer =C-c <return>= sends instead of popping up, because there the
+conversation is the point rather than a one-off lookup.
+
+Anything that acts on a result is overlay-local and announces itself, so it needs
+no binding here: after a rewrite, =C-c C-a= accepts, =C-c C-r= iterates with more
+instruction, =C-c C-k= rejects, and =C-c C-d= or =C-c C-e= show a diff or ediff.
+
+For work that must read files, run gradle or touch git, none of this applies:
+that is =SPC l a= and a real agent-shell session.
+
+*** Reaching the gateway
+
+Wise forbids personal LLM accounts, so a personal =GEMINI_API_KEY= is not an
+option. It is also unnecessary: the Wise LLM Gateway exposes Gemini on an
+OpenAI-compatible route, which the OpenCode plugin confirms in
+=lib/constants.ts=:
+
+#+begin_example
+LLM_GATEWAY_GEMINI_BASE_URL = "https://llm-gateway.tw.ee/api/v2/vertexai/v1"
+#+end_example
+
+So =gptel-make-openai= reaches it directly, with the same credentials Claude Code
+already uses. Two details are easy to get wrong. Model ids must carry the
+publisher prefix, =google/gemini-3.8-flash= rather than =gemini-3.8-flash=, or
+Vertex answers "Malformed publisher model". And the gateway wants the same team
+and use-case headers Claude Code sends.
+
+#+begin_src emacs-lisp
+(defvar my/llm-gateway-team "brazil-account"
+  "Team reported to the Wise LLM Gateway, for attribution.")
+
+(defvar my/llm-gateway-credentials-file "~/.llm_gateway/credentials"
+  "Where the Wise gateway OAuth credentials are cached.")
+
+(defvar my/llm-gateway-token-script "~/.wise-claude-code/token.sh"
+  "Helper that refreshes `my/llm-gateway-credentials-file'.
+Installed by the ai-engineering-hub setup, it runs an Okta flow in a Python
+venv with the callback on port 15432.")
+#+end_src
+
+The token is read from the credentials file and the helper is run only when the
+cached one is close to expiring. That matters more than it looks: the helper kills
+whatever holds port 15432 before it starts, and OpenCode's own OAuth callback
+uses that port, so calling it per request would be both slow and disruptive. The
+value the gateway accepts is =id_token=, not =access_token=; both are in the
+file.
+
+The margin is five minutes rather than seconds. A request that sets off with
+forty seconds left can still arrive after the token has died, and the gateway is
+the one holding the clock: it answers such a request with =(HTTP/2 403) Could not
+parse HTTP response=, which reads like a client bug and is not one. Refreshing
+early costs one extra three-second call an hour and removes the race.
+
+#+begin_src emacs-lisp
+(defvar my/llm-gateway-refresh-margin 300
+  "Refresh the token when fewer than this many seconds remain.")
+
+(defvar my/llm-gateway--token nil
+  "Cached (TOKEN . EXPIRES-AT), to avoid re-reading the file per request.")
+
+(defun my/llm-gateway--credentials ()
+  "Return the cached gateway credentials as an alist, or nil."
+  (let ((file (expand-file-name my/llm-gateway-credentials-file)))
+    (when (file-readable-p file)
+      (with-temp-buffer
+        (insert-file-contents file)
+        (goto-char (point-min))
+        (ignore-errors (json-parse-buffer :object-type 'alist))))))
+
+(defun my/llm-gateway--fresh-p (expires)
+  "Return non-nil when EXPIRES is far enough in the future to use."
+  (and expires (> expires (+ (float-time) my/llm-gateway-refresh-margin))))
+
+(defun my/llm-gateway--token-from-file ()
+  "Return (TOKEN . EXPIRES-AT) from the credentials file, or nil when stale."
+  (let* ((creds (my/llm-gateway--credentials))
+         (token (alist-get 'id_token creds))
+         (expires (alist-get 'expires_at creds)))
+    (when (and token (my/llm-gateway--fresh-p expires))
+      (cons token expires))))
+
+(defun my/llm-gateway--refresh ()
+  "Run the token helper, then re-read the credentials it writes."
+  (let ((script (expand-file-name my/llm-gateway-token-script))
+        ;; `call-process' inherits `default-directory', and the buffer that
+        ;; triggered the request may sit in one that no longer exists.
+        (default-directory (expand-file-name "~")))
+    (unless (file-executable-p script)
+      (user-error "Wise gateway token helper not found: %s" script))
+    (message "Refreshing Wise LLM gateway token…")
+    (unless (zerop (call-process script nil nil nil))
+      (user-error "Wise gateway token helper failed; try running %s by hand" script))
+    (or (my/llm-gateway--token-from-file)
+        (user-error "Token helper ran but produced no usable token"))))
+
+(defun my/llm-gateway-token ()
+  "Return a valid Wise LLM Gateway token, refreshing when it is close to expiry."
+  (unless (and my/llm-gateway--token
+               (my/llm-gateway--fresh-p (cdr my/llm-gateway--token)))
+    (setq my/llm-gateway--token (or (my/llm-gateway--token-from-file)
+                                    (my/llm-gateway--refresh))))
+  (car my/llm-gateway--token))
+#+end_src
+
+*** The backend
+
+=:header= is the trap. Its default is what supplies =Authorization=, so
+overriding it to add the Wise headers silently removes authentication unless the
+bearer token is put back by hand.
+
+=:stream= is nil because the gateway cannot stream on this route. It is not a
+client-side choice: asking for SSE returns a Python traceback from the gateway
+itself, =(HTTP/2 400) 'Stream' object has no attribute 'model_dump'=, while the
+identical request without streaming returns 200. Marking the backend as unable to
+stream is the honest encoding of that, and it leaves =gptel-stream= alone for any
+backend added later that can. Responses therefore arrive in one piece rather than
+typing themselves out.
+
+#+begin_src emacs-lisp
+(use-package! gptel
+  :defer t
+  :commands (gptel gptel-send gptel-menu gptel-rewrite gptel-add gptel-abort)
+  :init
+  ;; A lookup should not edit the file, so the fast key asks and shows the
+  ;; answer.  `gptel-send', which inserts, is one keystroke further away.
+  (map! "C-c <return>"   #'my/gptel-ask
+        "C-c C-<return>" #'gptel-menu)
+  ;; Inside a chat buffer the same physical key must continue the conversation
+  ;; instead. gptel binds `C-c RET', which is `C-c C-m' and a different key from
+  ;; `C-c <return>', so the global binding above would otherwise shadow it and
+  ;; pop up an answer mid-chat.
+  (map! :map gptel-mode-map "C-c <return>" #'gptel-send)
+  (map! :leader
+        (:prefix "l"
+         (:prefix ("g" . "gptel")
+          :desc "chat buffer"       "g" #'gptel
+          :desc "send (inserts)"    "s" #'gptel-send
+          :desc "rewrite region"    "r" #'gptel-rewrite
+          :desc "add context"       "a" #'gptel-add
+          :desc "add file"          "f" #'gptel-add-file
+          :desc "directive"         "d" #'gptel-system-prompt
+          :desc "abort"             "k" #'gptel-abort)))
+  :config
+  ;; Chats are Org files, so they save, reopen and search like any other note.
+  (setq gptel-default-mode 'org-mode)
+  (setq gptel-backend
+        (gptel-make-openai "Wise Gemini"
+          :host "llm-gateway.tw.ee"
+          :endpoint "/api/v2/vertexai/v1/chat/completions"
+          :protocol "https"
+          :stream nil
+          :key #'my/llm-gateway-token
+          :header (lambda (_info)
+                    `(("Authorization" . ,(concat "Bearer " (my/llm-gateway-token)))
+                      ("x-wise-llm-gateway-team" . ,my/llm-gateway-team)
+                      ("x-wise-llm-gateway-use-case" . "gptel")))
+          :models '(google/gemini-3.8-flash
+                    google/gemini-3.1-pro-preview
+                    google/gemini-3.1-flash-lite-preview
+                    google/gemini-3-flash-preview
+                    google/gemini-2.5-pro
+                    google/gemini-2.5-flash))
+        gptel-model 'google/gemini-3.8-flash))
+#+end_src
+
+Few keys are bound because most of gptel needs none: =C-c C-<return>= opens a
+transient already holding model, directive, context and destination, so there is
+no key per setting.
+
+*** Asking without editing the buffer
+
+The stock directive does not forbid markup, so asking "what is the number of pi?"
+in a code buffer answers with =$\pi \approx 3.14…$= and =**3.14**=: LaTeX and
+Markdown, inserted into source. In an Org buffer =gptel-org-convert-response=
+would have tidied the Markdown, but nothing converts LaTeX and most buffers are
+not Org.
+
+Two fixes. A directive that bans markup, made the default because the common case
+is a one-line question from wherever you happen to be. And a command that shows
+the answer instead of typing it into the file, because a lookup should not be an
+edit. =gptel-send= is still there, under =SPC l g s=, for when inserting is the
+point.
+
+The directive has to be set inside =after!=. =gptel-directives= does not exist
+until gptel loads, so setting it at top level breaks startup.
+
+#+begin_src emacs-lisp
+(after! gptel
+  (setf (alist-get 'default gptel-directives)
+        (concat "You are a helpful assistant living in Emacs. "
+                "Answer in plain text. No Markdown, no LaTeX, no bold, no headings. "
+                "Use a code block only when the answer is itself code. "
+                "No preamble and no restating the question. "
+                "One or two sentences unless more is genuinely needed."))
+  ;; The active directive is read when gptel loads, so updating the alist alone
+  ;; leaves the session on the old one.  `gptel-system-prompt' is both this
+  ;; variable and the command bound to `SPC l g d'; `gptel--system-message' is
+  ;; an obsolete alias for it as of 0.9.9.6.
+  (setq gptel-system-prompt (alist-get 'default gptel-directives)))
+
+(defun my/gptel--show-answer (response)
+  "Show RESPONSE in a popup, leaving the current buffer untouched."
+  (let ((buffer (get-buffer-create "*gptel answer*")))
+    (with-current-buffer buffer
+      (let ((inhibit-read-only t))
+        (erase-buffer)
+        (insert response)
+        (goto-char (point-min)))
+      (view-mode 1))
+    (display-buffer buffer)))
+
+(defun my/gptel-ask (start end)
+  "Ask about the region, or the line at point, and show the answer in a popup.
+The buffer is never modified.  Use `gptel-send' when you want the response
+inserted instead."
+  (interactive (if (use-region-p)
+                   (list (region-beginning) (region-end))
+                 (list (line-beginning-position) (line-end-position))))
+  ;; Bound globally, so it may be the thing that first loads gptel.
+  (require 'gptel)
+  (let ((prompt (string-trim (buffer-substring-no-properties start end))))
+    (when (string-empty-p prompt)
+      (user-error "Nothing to ask about"))
+    (message "Asking %s…" (gptel-backend-name gptel-backend))
+    (gptel-request prompt
+      :callback (lambda (response info)
+                  (if (stringp response)
+                      (my/gptel--show-answer response)
+                    (message "gptel: %s"
+                             (or (plist-get info :error)
+                                 (plist-get info :status)
+                                 "no response")))))))
+
+(set-popup-rule! "^\\*gptel answer\\*" :side 'bottom :height 0.3 :quit t :select nil)
+#+end_src
+
 ** Gotchas
 
 Each line below cost an afternoon. They are collected here so the sections above
@@ -2176,6 +2434,23 @@ Evil and other packages:
 - =evil-collection= binds =gq= to a symbol agent-shell unbinds after renaming
   its queue commands, so the key is dead until rebound.
 - =agent-recall-search-paths= defaults to nil, and reindexing needs it.
+
+gptel and the gateway:
+
+- The gateway cannot stream on the OpenAI-compatible VertexAI route. It answers
+  =(HTTP/2 400) 'Stream' object has no attribute 'model_dump'=, which is its own
+  Python error, not anything Emacs did. The same request with =:stream nil=
+  returns 200, so the backend is declared unable to stream.
+- Model ids need the publisher prefix. =gemini-3.8-flash= is rejected as a
+  malformed publisher model; =google/gemini-3.8-flash= works.
+- Overriding =:header= drops gptel's default =Authorization= header, because that
+  default is the only thing that sends it. Adding the Wise team headers means
+  re-adding the bearer token by hand.
+- The token to send is =id_token=, not =access_token=. Both sit in
+  =~/.llm_gateway/credentials= and only one is accepted.
+- =token.sh= kills whatever holds port 15432 before authenticating, which is the
+  port OpenCode's OAuth callback uses. That is why the token is read from the
+  credentials file and the helper runs only once the cached token has expired.
 
 ** Extensions that lost
 

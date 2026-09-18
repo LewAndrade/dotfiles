@@ -34,3 +34,8 @@
 ;; Manages *past* sessions: ripgrep full-text search over transcripts, then
 ;; resume. Complements hq rather than overlapping it -- hq cannot see history.
 (package! agent-recall)
+
+;; Not an agent: gptel ships zero tools, so it cannot read the repo or run
+;; commands. It covers what agent-shell cannot -- rewriting a region in place
+;; with a diff, and answering without starting a session.
+(package! gptel)
