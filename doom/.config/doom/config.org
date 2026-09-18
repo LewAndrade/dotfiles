@@ -2200,15 +2200,58 @@ There are **seven** agents, not two, and =opencode agent list= is the only way t
 discover them. Setting only =plan= and =build= leaves the subagents inheriting the
 global =model=, which defeats the point of choosing OpenCode in the first place.
 
-| Agent        | Type     | Model              | Why                                          |
-|--------------+----------+--------------------+----------------------------------------------|
-| =build=      | primary  | =gpt-6-astra=      | Writes the code                              |
-| =plan=       | primary  | =gpt-6-astra=      | Reasoning before editing                     |
-| =general=    | subagent | =gpt-6-astra=      | Multistep work, same job as =build=          |
-| =explore=    | subagent | =gemini-3.8-flash= | Read-only search: high volume, low reasoning |
-| =compaction= | primary  | =gpt-6-astra=      | Losing detail here is worse than the cost    |
-| =summary=    | primary  | =gpt-5.6-luna=     | Display text                                 |
-| =title=      | primary  | =gpt-5.6-luna=     | Trivial                                      |
+*** What each agent is for
+
+Three tiers, separated by who invokes them. That is what makes the model choice
+obvious.
+
+| Agent        | Type     | Tools                       | Runs when                                 |
+|--------------+----------+-----------------------------+-------------------------------------------|
+| =build=      | primary  | all                         | Default. Normal development.              |
+| =plan=       | primary  | edits and bash set to =ask= | You want analysis with no changes         |
+| =general=    | subagent | all except todo, *can edit* | Multistep work, branches in parallel      |
+| =explore=    | subagent | read-only                   | Find files, search code, answer questions |
+| =compaction= | primary  | none                        | Automatically, compressing a full context |
+| =summary=    | primary  | none                        | Automatically, session summaries          |
+| =title=      | primary  | none                        | Automatically, session titles             |
+
+The one that surprises: =general= **can edit files**. It is not a cheap helper, so
+it deserves build-grade quality. Primary agents cycle on =Tab=; subagents are
+invoked by a primary or forced by =@mention=, as in =@explore find the payout
+switch-off=. The three hidden ones are never selectable.
+
+=scout=, a third subagent for dependency research, is in the documentation but not
+in 1.18.31.
+
+*** Model and effort per agent
+
+=variant= is the effort dial, and it is per-model: =opencode models --verbose=
+reports a =variants= map alongside cost and context. **An unrecognised variant is
+silently ignored, not rejected** — a deliberately bogus one was accepted happily —
+so a variant must be checked against the model's own list rather than assumed.
+
+Costs are per million tokens, from the same metadata:
+
+| Model              | in  | out | context | variants          |
+|--------------------+-----+-----+---------+-------------------|
+| =gpt-6-astra=      | 10  | 50  | 1.05M   | low … max         |
+| =gpt-5.6-sol=      | 4   | 20  | 400K    | none … max        |
+| =gpt-5.6-terra=    | 2   | 12  | 400K    | none … max        |
+| =gpt-5.6-luna=     | 0.2 | 1.2 | 400K    | none … max        |
+| =gemini-3.8-flash= | 0.5 | 3   | 1M      | **none at all**   |
+| =gemini-2.5-flash= | 0.3 | 2.5 | 1M      | low, medium, high |
+| =claude-5-sonnet=  | 3   | 15  | 1M      | low … max         |
+| =claude-opus-5=    | 5   | 25  | 1M      | low … max         |
+
+That price ladder is the only solid evidence for what the names mean: astra, then
+sol, then terra, then luna, which is 50x cheaper than astra on input. Note also
+that =-fast= is **not** lower effort: =sol-fast= differs from =sol= only by
+=options.serviceTier: "priority"=, a queue position.
+
+Every 3.x Gemini declares an empty variant list; only the 2.5 generation has the
+dial. So Gemini here is used without one, on the grounds that search and
+compaction reward a 1M window and instruction-following more than a reasoning
+setting.
 
 #+begin_example
 {
@@ -2218,33 +2261,28 @@ global =model=, which defeats the point of choosing OpenCode in the first place.
   "autoupdate": "notify",
   "provider": { "wise-llm-gateway": { "options": { "team": "brazil-account" } } },
   "agent": {
-    "plan":       { "model": "openai/gpt-6-astra" },
-    "build":      { "model": "openai/gpt-6-astra" },
-    "general":    { "model": "openai/gpt-6-astra" },
+    "plan":       { "model": "openai/gpt-6-astra", "variant": "xhigh" },
+    "build":      { "model": "openai/gpt-6-astra", "variant": "xhigh" },
+    "general":    { "model": "openai/gpt-5.6-sol", "variant": "max" },
     "explore":    { "model": "wise-llm-gateway-gemini/gemini-3.8-flash" },
-    "compaction": { "model": "openai/gpt-6-astra" },
-    "summary":    { "model": "openai/gpt-5.6-luna" },
-    "title":      { "model": "openai/gpt-5.6-luna" }
+    "compaction": { "model": "wise-llm-gateway-gemini/gemini-3.8-flash" },
+    "summary":    { "model": "openai/gpt-5.6-luna", "variant": "max" },
+    "title":      { "model": "openai/gpt-5.6-luna", "variant": "max" }
   }
 }
 #+end_example
 
-=explore= runs on Gemini over the gateway while everything else runs on GPT over
-ChatGPT OAuth, so one session spans two providers and two auth mechanisms. That is
-the whole reason for choosing OpenCode, and it works: a routing test reported
-=wise-llm-gateway-gemini/google/gemini-3.8-flash= for =explore= and
-=openai/gpt-6-astra= for =general= in the same run.
+So one session spans two providers and two auth mechanisms, which is the whole
+reason for choosing OpenCode. Verified rather than assumed: a routing test
+reported =wise-llm-gateway-gemini/google/gemini-3.8-flash= for =explore= and
+=openai/gpt-5.6-sol= for =general= in the same run.
 
-Flash suits =explore= better than a small GPT would: read-only search is
-high-volume with a large context and little reasoning. It also avoids guessing,
-since what =astra=, =terra=, =sol=, =luna= and the =-fast= suffix denote is
-documented nowhere I could find. =luna= is used for =title= and =summary= on the
-one piece of evidence available, that the Wise plugin picks it as its own
-=small_model= default.
+To check it yourself, ask a session to spawn one of each with a fake task and
+report the model from its own runtime context. Config that looks right and routing
+that works are different things.
 
-To confirm routing really reaches the subagents, ask a session to spawn one of
-each with a fake task and report the model from its own runtime context. Config
-that looks right and routing that works are different things.
+=general= at =max= will make delegated work slow, since it is the agent that runs
+branches in parallel; =high= is the knob if it drags.
 
 **Changing any of it.** Edit the =agent= block and restart the shell; the config is
 read at session start. Both providers are authenticated, so any agent can take any
