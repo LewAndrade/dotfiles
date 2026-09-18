@@ -2114,6 +2114,93 @@ perspective blocks =projectile-find-file= inside the workspace.
 it in a commentary header. Nothing fails loudly without it, the index simply
 stops growing, which then looks like a bug in labelling rather than in indexing.
 
+** GPT through OpenCode
+
+OpenCode rather than Codex because it can give each agent its own model, which is
+the whole reason for adding it; nothing in the Codex documentation offers an
+equivalent. Both need the same ChatGPT Enterprise entitlements, so that was never
+the deciding question.
+
+agent-shell rather than one of the three =opencode.el= packages. agent-shell
+already speaks =opencode acp=, none of the three solve per-agent models either
+(that lives in =opencode.json= whatever the front end), two of them both define
+=M-x opencode= and so collide with each other, and all of them re-implement the
+session list, transcript and diff review that hq and agent-recall already provide.
+
+Launch with =SPC l m= and pick =opencode=, one of the nineteen agents agent-shell
+offers. Switching model mid-session is =, s= then Model, **not** =, v=: OpenCode
+does not advertise the ACP =set-model= capability, so the model lives in the
+session's config options instead. =, v= remains the Claude path.
+
+Nothing about this is in Emacs config, so there is nothing to tangle. It is
+recorded here because none of it is discoverable from the machine afterwards.
+
+*** Installing
+
+The Wise instructions point pnpm's *global* registry at Artifactory, which would
+affect every install on the machine. Only the plugin is Artifactory-only, so the
+registry is scoped to =@wise= instead and =opencode-ai= comes from public npm.
+
+#+begin_example
+pnpm add -g opencode-ai@latest --allow-build=opencode-ai
+pnpm config set @wise:registry https://arti.tw.ee/artifactory/api/npm/npm-virtual/
+pnpm add -g @wise/opencode-llm-gateway-auth@latest --allow-build=@wise/opencode-llm-gateway-auth
+#+end_example
+
+=--allow-build= is required from pnpm 10 onward. The plugin needs no ="plugin"=
+entry in the config: its postinstall drops a loader into
+=~/.config/opencode/plugins/=, which OpenCode discovers on startup. bun is not
+needed despite the postinstall mentioning it, because the published tarball ships
+=dist/index.js= already built.
+
+*** Two separate auth paths
+
+Worth being precise about, because they touch different files:
+
+- **GPT** comes from ChatGPT OAuth against the Enterprise subscription, *not* the
+  LLM Gateway. The gateway's catalogue contains no GPT at all.
+  =opencode auth login -p openai -m "ChatGPT Pro/Plus (browser)"=. Credentials
+  land in =~/.local/share/opencode/auth.json=.
+- **Claude, Gemini and Mistral** come from the gateway over Okta, with the
+  callback on port 15432. That flow writes =~/.llm_gateway/credentials=, the same
+  file [[*Gemini through gptel][gptel]] reads.
+
+That second point is a live trap. Authenticating the gateway provider through
+OpenCode makes it co-owner of a file gptel depends on, and it adds a
+=refresh_token= the current file lacks. Authenticating only =openai= leaves the
+file untouched, which is why Claude stays in claude-code and Gemini in gptel
+rather than being routed through OpenCode as well.
+
+*** Routing
+
+=~/.config/opencode/opencode.json=. =team= is mandatory in spirit but not in
+practice: unset, it falls back to the literal string ="YOUR-TEAM-HERE"= and bills
+to a team that does not exist rather than failing.
+
+#+begin_example
+{
+  "$schema": "https://opencode.ai/config.json",
+  "model": "openai/gpt-6-astra",
+  "small_model": "openai/gpt-5.6-luna",
+  "autoupdate": "notify",
+  "provider": { "wise-llm-gateway": { "options": { "team": "brazil-account" } } },
+  "agent": {
+    "plan":  { "model": "openai/gpt-6-astra" },
+    "build": { "model": "openai/gpt-6-astra" }
+  }
+}
+#+end_example
+
+The =agent= block is where per-agent models go, and it is the point of the whole
+exercise even though both entries currently match. =autoupdate= is ="notify"=
+because OpenCode's self-updater does not pass =--allow-build= and would break its
+own install.
+
+=opencode models= lists what is actually reachable, which is the only authority on
+model ids. The Confluence page's =openai/gpt-5.4= is stale, and the plugin's
+pricing table is narrower than reality: the live list includes =-fast= variants of
+everything plus =gpt-5.3-codex-spark= and the =gpt-5.4-mini= family.
+
 ** Gemini through gptel
 
 gptel is not an agent. It ships zero tools, so it cannot read the repo, edit
@@ -2434,6 +2521,22 @@ Evil and other packages:
 - =evil-collection= binds =gq= to a symbol agent-shell unbinds after renaming
   its queue commands, so the key is dead until rebound.
 - =agent-recall-search-paths= defaults to nil, and reindexing needs it.
+
+OpenCode:
+
+- The first session after installing stalls. Initialisation completes, the prompt
+  appears, but no session is created and submitting says "Busy, please wait".
+  Restarting the shell fixes it permanently; it is first-run state setup.
+- OpenCode's ACP session capabilities are =close, fork, list, resume= with **no
+  =delete=**, unlike Claude's. Session deletion therefore has to work by removing
+  files, which is what [[*Discarding a session][the delete command]] already does.
+- The plugin force-disables the direct =anthropic= provider, along with
+  =opencode=, =opencode-zen= and =opencode-go=, and sets
+  =OPENCODE_DISABLE_MODELS_FETCH=. Claude is reachable only as
+  =wise-llm-gateway/claude-*=.
+- =provider.wise-llm-gateway.options.tokenScript= is documented in the plugin's
+  example config but is dead code, so pointing it at =token.sh= does nothing.
+- Gateway models need ZTNA. GPT over ChatGPT OAuth does not.
 
 gptel and the gateway:
 
