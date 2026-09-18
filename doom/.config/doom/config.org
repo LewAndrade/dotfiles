@@ -2165,11 +2165,22 @@ Worth being precise about, because they touch different files:
   callback on port 15432. That flow writes =~/.llm_gateway/credentials=, the same
   file [[*Gemini through gptel][gptel]] reads.
 
-That second point is a live trap. Authenticating the gateway provider through
-OpenCode makes it co-owner of a file gptel depends on, and it adds a
-=refresh_token= the current file lacks. Authenticating only =openai= leaves the
-file untouched, which is why Claude stays in claude-code and Gemini in gptel
-rather than being routed through OpenCode as well.
+Both are authenticated (=opencode auth login -p wise-llm-gateway= for the second),
+so the shared file now has two writers: =token.sh= via Claude Code's hourly
+helper, and OpenCode's plugin on refresh. That sounds worse than it is, and it was
+measured rather than assumed:
+
+- The plugin rewrites the file but keeps **exactly** the same six keys and leaves
+  the mode at 644. gptel reads =id_token= and =expires_at=, so it is unaffected.
+- The gateway =refresh_token= is **not** written there; it lives in OpenCode's own
+  =auth.json=. gptel cannot borrow it without implementing the Okta refresh in
+  elisp, which is not worth the coupling.
+- Free win: OpenCode also keeps the shared file fresh, so gptel falls back to
+  =token.sh= less often than before.
+
+The one real contention is port 15432. =token.sh= kills whatever holds it before
+authenticating and the plugin's callback wants it, so an OpenCode login racing a
+Claude Code refresh can fail. Re-running the login fixes it.
 
 *** Routing
 
@@ -2181,15 +2192,15 @@ There are **seven** agents, not two, and =opencode agent list= is the only way t
 discover them. Setting only =plan= and =build= leaves the subagents inheriting the
 global =model=, which defeats the point of choosing OpenCode in the first place.
 
-| Agent        | Type     | Model          | Why                                          |
-|--------------+----------+----------------+----------------------------------------------|
-| =build=      | primary  | =gpt-6-astra=  | Writes the code                              |
-| =plan=       | primary  | =gpt-6-astra=  | Reasoning before editing                     |
-| =general=    | subagent | =gpt-6-astra=  | Multistep work, same job as =build=          |
-| =explore=    | subagent | =gpt-5.6-luna= | Read-only search: high volume, low reasoning |
-| =compaction= | primary  | =gpt-6-astra=  | Losing detail here is worse than the cost    |
-| =summary=    | primary  | =gpt-5.6-luna= | Display text                                 |
-| =title=      | primary  | =gpt-5.6-luna= | Trivial                                      |
+| Agent        | Type     | Model              | Why                                          |
+|--------------+----------+--------------------+----------------------------------------------|
+| =build=      | primary  | =gpt-6-astra=      | Writes the code                              |
+| =plan=       | primary  | =gpt-6-astra=      | Reasoning before editing                     |
+| =general=    | subagent | =gpt-6-astra=      | Multistep work, same job as =build=          |
+| =explore=    | subagent | =gemini-3.8-flash= | Read-only search: high volume, low reasoning |
+| =compaction= | primary  | =gpt-6-astra=      | Losing detail here is worse than the cost    |
+| =summary=    | primary  | =gpt-5.6-luna=     | Display text                                 |
+| =title=      | primary  | =gpt-5.6-luna=     | Trivial                                      |
 
 #+begin_example
 {
@@ -2202,7 +2213,7 @@ global =model=, which defeats the point of choosing OpenCode in the first place.
     "plan":       { "model": "openai/gpt-6-astra" },
     "build":      { "model": "openai/gpt-6-astra" },
     "general":    { "model": "openai/gpt-6-astra" },
-    "explore":    { "model": "openai/gpt-5.6-luna" },
+    "explore":    { "model": "wise-llm-gateway-gemini/gemini-3.8-flash" },
     "compaction": { "model": "openai/gpt-6-astra" },
     "summary":    { "model": "openai/gpt-5.6-luna" },
     "title":      { "model": "openai/gpt-5.6-luna" }
@@ -2210,13 +2221,18 @@ global =model=, which defeats the point of choosing OpenCode in the first place.
 }
 #+end_example
 
-=luna= is the cheap tier on the only evidence available: the Wise plugin itself
-uses it as its =small_model= default. What =astra=, =terra=, =sol=, =luna= and the
-=-fast= suffix actually denote is documented nowhere I could find.
+=explore= runs on Gemini over the gateway while everything else runs on GPT over
+ChatGPT OAuth, so one session spans two providers and two auth mechanisms. That is
+the whole reason for choosing OpenCode, and it works: a routing test reported
+=wise-llm-gateway-gemini/google/gemini-3.8-flash= for =explore= and
+=openai/gpt-6-astra= for =general= in the same run.
 
-Every model must be an =openai/= one, because only that provider is
-authenticated. Routing a subagent at =wise-llm-gateway-gemini/*= would require
-authenticating the gateway, which reopens the credentials collision above.
+Flash suits =explore= better than a small GPT would: read-only search is
+high-volume with a large context and little reasoning. It also avoids guessing,
+since what =astra=, =terra=, =sol=, =luna= and the =-fast= suffix denote is
+documented nowhere I could find. =luna= is used for =title= and =summary= on the
+one piece of evidence available, that the Wise plugin picks it as its own
+=small_model= default.
 
 To confirm routing really reaches the subagents, ask a session to spawn one of
 each with a fake task and report the model from its own runtime context. Config
