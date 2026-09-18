@@ -2177,6 +2177,20 @@ rather than being routed through OpenCode as well.
 practice: unset, it falls back to the literal string ="YOUR-TEAM-HERE"= and bills
 to a team that does not exist rather than failing.
 
+There are **seven** agents, not two, and =opencode agent list= is the only way to
+discover them. Setting only =plan= and =build= leaves the subagents inheriting the
+global =model=, which defeats the point of choosing OpenCode in the first place.
+
+| Agent        | Type     | Model          | Why                                          |
+|--------------+----------+----------------+----------------------------------------------|
+| =build=      | primary  | =gpt-6-astra=  | Writes the code                              |
+| =plan=       | primary  | =gpt-6-astra=  | Reasoning before editing                     |
+| =general=    | subagent | =gpt-6-astra=  | Multistep work, same job as =build=          |
+| =explore=    | subagent | =gpt-5.6-luna= | Read-only search: high volume, low reasoning |
+| =compaction= | primary  | =gpt-6-astra=  | Losing detail here is worse than the cost    |
+| =summary=    | primary  | =gpt-5.6-luna= | Display text                                 |
+| =title=      | primary  | =gpt-5.6-luna= | Trivial                                      |
+
 #+begin_example
 {
   "$schema": "https://opencode.ai/config.json",
@@ -2185,16 +2199,31 @@ to a team that does not exist rather than failing.
   "autoupdate": "notify",
   "provider": { "wise-llm-gateway": { "options": { "team": "brazil-account" } } },
   "agent": {
-    "plan":  { "model": "openai/gpt-6-astra" },
-    "build": { "model": "openai/gpt-6-astra" }
+    "plan":       { "model": "openai/gpt-6-astra" },
+    "build":      { "model": "openai/gpt-6-astra" },
+    "general":    { "model": "openai/gpt-6-astra" },
+    "explore":    { "model": "openai/gpt-5.6-luna" },
+    "compaction": { "model": "openai/gpt-6-astra" },
+    "summary":    { "model": "openai/gpt-5.6-luna" },
+    "title":      { "model": "openai/gpt-5.6-luna" }
   }
 }
 #+end_example
 
-The =agent= block is where per-agent models go, and it is the point of the whole
-exercise even though both entries currently match. =autoupdate= is ="notify"=
-because OpenCode's self-updater does not pass =--allow-build= and would break its
-own install.
+=luna= is the cheap tier on the only evidence available: the Wise plugin itself
+uses it as its =small_model= default. What =astra=, =terra=, =sol=, =luna= and the
+=-fast= suffix actually denote is documented nowhere I could find.
+
+Every model must be an =openai/= one, because only that provider is
+authenticated. Routing a subagent at =wise-llm-gateway-gemini/*= would require
+authenticating the gateway, which reopens the credentials collision above.
+
+To confirm routing really reaches the subagents, ask a session to spawn one of
+each with a fake task and report the model from its own runtime context. Config
+that looks right and routing that works are different things.
+
+=autoupdate= is ="notify"= because OpenCode's self-updater does not pass
+=--allow-build= and would break its own install.
 
 =opencode models= lists what is actually reachable, which is the only authority on
 model ids. The Confluence page's =openai/gpt-5.4= is stale, and the plugin's
