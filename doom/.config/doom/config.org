@@ -1745,6 +1745,44 @@ with no transcript, so binding that empty list as a condition made the command
 silently do nothing on its main use case. Only the union of the two lists is a
 real precondition.
 
+*** OpenCode stores sessions differently
+
+Claude writes one =.jsonl= per session, so deleting the file is the deletion.
+OpenCode keeps them in a SQLite database, =~/.local/share/opencode/opencode.db=,
+and advertises no ACP =delete=, so neither the file removal nor the courtesy ACP
+call touches it. Without the branch below, deleting an OpenCode session would
+strip its transcripts and label while the session itself survived, and the picker
+would keep listing it, because the picker reads ACP =session/list= which reads that
+database.
+
+Its CLI does the job, and the id prefix tells the two apart: OpenCode mints
+=ses_...=, Claude uses bare UUIDs.
+
+#+begin_src emacs-lisp
+(defvar my/agent-shell-opencode-executable "opencode"
+  "OpenCode CLI, used to list and delete sessions it owns.")
+
+(defun my/agent-shell--opencode-session-p (session-id)
+  "Return non-nil when SESSION-ID belongs to OpenCode rather than Claude."
+  (string-prefix-p "ses_" session-id))
+
+(defun my/agent-shell--opencode-sessions (&optional limit)
+  "Return OpenCode's sessions as a list of alists, newest first."
+  (when-let* ((exe (executable-find my/agent-shell-opencode-executable)))
+    (with-temp-buffer
+      (when (zerop (call-process exe nil t nil
+                                 "session" "list" "--format" "json"
+                                 "-n" (number-to-string (or limit 200))))
+        (goto-char (point-min))
+        (ignore-errors
+          (json-parse-buffer :object-type 'alist :array-type 'list))))))
+
+(defun my/agent-shell--opencode-session-delete (session-id)
+  "Delete SESSION-ID from OpenCode's database.  Return non-nil on success."
+  (when-let* ((exe (executable-find my/agent-shell-opencode-executable)))
+    (zerop (call-process exe nil nil nil "session" "delete" session-id))))
+#+end_src
+
 #+begin_src emacs-lisp
 (defun my/agent-shell-delete-session (session-id &optional label no-confirm)
   "Delete SESSION-ID everywhere: store, label, transcripts and index.
@@ -1752,18 +1790,25 @@ LABEL names the session when asking.  With NO-CONFIRM, skip the prompt.
 Returns non-nil when something was deleted."
   (when (my/agent-shell--session-buffer session-id)
     (user-error "That session is open; close its shell first"))
-  (let ((transcripts (my/agent-shell--session-files session-id))
-        (store (my/agent-shell--session-store-files session-id))
-        (name (or label
-                  (agent-recall-session-label session-id)
-                  session-id)))
-    (unless (or transcripts store)
+  (let* ((opencode (my/agent-shell--opencode-session-p session-id))
+         (transcripts (my/agent-shell--session-files session-id))
+         (store (unless opencode (my/agent-shell--session-store-files session-id)))
+         (name (or label
+                   (agent-recall-session-label session-id)
+                   session-id)))
+    (unless (or transcripts store opencode)
       (user-error "Nothing on disk for session %s" session-id))
     (when (or no-confirm
               (y-or-n-p
-               (format "Delete %S, its %d transcript(s) and %d store file(s)? "
-                       name (length transcripts) (length store))))
-      (my/agent-shell--session-delete-request session-id)
+               (format "Delete %S, its %d transcript(s) and %s? "
+                       name (length transcripts)
+                       (if opencode
+                           "its OpenCode session"
+                         (format "%d store file(s)" (length store))))))
+      (if opencode
+          (unless (my/agent-shell--opencode-session-delete session-id)
+            (message "agent-shell: OpenCode would not delete %s" session-id))
+        (my/agent-shell--session-delete-request session-id))
       (agent-recall-metadata-put session-id 'label nil)
       (dolist (file transcripts)
         (ignore-errors (delete-file file))
@@ -1842,8 +1887,8 @@ the command name is used instead, which is what makes a =/model= row identifiabl
         (forward-line 1))
       (or found command))))
 
-(defun my/agent-shell--deletable-sessions ()
-  "Return an alist of (DISPLAY . SESSION-ID) for every stored session."
+(defun my/agent-shell--claude-deletable ()
+  "Return (DISPLAY . ID) rows for Claude's stored sessions."
   (let* ((projects (expand-file-name "projects" agent-recall-claude-config-dir))
          (dirs (when (file-directory-p projects)
                  (directory-files projects t directory-files-no-dot-files-regexp)))
@@ -1862,7 +1907,33 @@ the command name is used instead, which is what makes a =/model= row identifiabl
                               (file-name-nondirectory dir))
                       id)
                 rows))))
-    (sort rows (lambda (a b) (string> (car a) (car b))))))
+    rows))
+
+(defun my/agent-shell--opencode-deletable ()
+  "Return (DISPLAY . ID) rows for OpenCode's sessions."
+  (mapcar
+   (lambda (session)
+     (let* ((id (alist-get 'id session))
+            (label (or (agent-recall-session-label id)
+                       (alist-get 'title session)
+                       id))
+            ;; `updated' is epoch milliseconds.
+            (stamp (format-time-string
+                    "%Y-%m-%d %H:%M"
+                    (seconds-to-time (/ (or (alist-get 'updated session) 0) 1000))))
+            (dir (file-name-nondirectory
+                  (directory-file-name (or (alist-get 'directory session) "")))))
+       (cons (format "%s  %s  [%s]" stamp
+                     (truncate-string-to-width label 70)
+                     (if (string-empty-p dir) "?" dir))
+             id)))
+   (my/agent-shell--opencode-sessions)))
+
+(defun my/agent-shell--deletable-sessions ()
+  "Return an alist of (DISPLAY . SESSION-ID) across both agents' stores."
+  (sort (append (my/agent-shell--claude-deletable)
+                (my/agent-shell--opencode-deletable))
+        (lambda (a b) (string> (car a) (car b)))))
 #+end_src
 
 ** Resuming a session
@@ -2660,8 +2731,10 @@ OpenCode:
   appears, but no session is created and submitting says "Busy, please wait".
   Restarting the shell fixes it permanently; it is first-run state setup.
 - OpenCode's ACP session capabilities are =close, fork, list, resume= with **no
-  =delete=**, unlike Claude's. Session deletion therefore has to work by removing
-  files, which is what [[*Discarding a session][the delete command]] already does.
+  =delete=**, unlike Claude's, and its sessions live in a SQLite database rather
+  than one file each. So neither the ACP call nor deleting files reaches them;
+  [[*OpenCode stores sessions differently][the delete command]] shells out to
+  =opencode session delete= for those ids instead.
 - The plugin force-disables the direct =anthropic= provider, along with
   =opencode=, =opencode-zen= and =opencode-go=, and sets
   =OPENCODE_DISABLE_MODELS_FETCH=. Claude is reachable only as
