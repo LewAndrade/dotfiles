@@ -48,8 +48,9 @@ or `soft`, stored in `~/.config/everforest/contrast`. Switch all three with:
 everforest soft
 ```
 
-The script builds the Ghostty and opencode themes from the official palette and
-reloads the theme in Emacs. Reload Ghostty with `cmd+shift+,` and restart
+The script builds the Ghostty and opencode themes from the official palette,
+writes that palette to `~/.config/everforest/palette.json` for the colors the
+Emacs theme lacks, such as magit's diff tints, and reloads the theme in Emacs. Reload Ghostty with `cmd+shift+,` and restart
 opencode. Run `everforest` with no argument to rebuild at the stored contrast.
 
 ## Git identity
