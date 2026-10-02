@@ -9,7 +9,8 @@ My configuration files, one GNU Stow package per tool. macOS only.
 | `doom`     | `~/.config/doom`                    | Literate Doom Emacs config. Edit `config.org`. |
 | `nvim`     | `~/.config/nvim`                    | LazyVim based.                                 |
 | `ghostty`  | `~/.config/ghostty`                 | Terminal. Everforest themes come from `everforest`. |
-| `opencode` | `~/.config/opencode/themes`         | Only the Everforest theme. The rest stays local. |
+| `opencode` | `~/.config/opencode`                | `cli.json` and the Everforest theme. Work config stays local. |
+| `claude`   | `~/.claude`                         | `CLAUDE.md` and agents. `settings.json` stays local. |
 | `everforest` | `~/.config/everforest/contrast`   | Shared Everforest contrast. See below.         |
 | `fish`     | `~/.config/fish`                    | Shell. Plugins come from fisher, not from here.|
 | `starship` | `~/.config/starship.toml`           | Prompt.                                        |
@@ -24,7 +25,7 @@ My configuration files, one GNU Stow package per tool. macOS only.
 
 ```sh
 cd ~/dotfiles
-stow --no-folding -t ~ doom nvim ghostty fish starship git scripts everforest opencode
+stow --no-folding -t ~ doom nvim ghostty fish starship git scripts everforest opencode claude
 ```
 
 Link one package on its own with `stow --no-folding -t ~ doom`.
