@@ -12,7 +12,7 @@
 | Emacs      | =emacs-app= 30.2 on macOS, started maximized               |
 | Framework  | Doom. Modules live in =init.el=, everything else lives here |
 | Editing    | evil, with =SPC= as leader and =,= as localleader           |
-| Theme      | =doom-solarized-light=, and =doom-peacock= on =SPC t D=      |
+| Theme      | Everforest light, dark on =SPC t D=, see [[*Theme]]        |
 | Font       | Maple Mono NF, with Noto Emoji behind it for symbols       |
 | Completion | vertico in the minibuffer, corfu in the buffer             |
 | Languages  | Java and Kotlin first, through =lsp-mode= and jdtls        |
@@ -49,11 +49,57 @@ with =:localleader= reads the value at load time.
 
 ** Theme
 
-Solarized Light by default, because most of my day is in a bright room. =SPC t D=
-switches to Peacock, which is set up in [[*Theme toggle]].
+Everforest everywhere: here, in Ghostty, and in opencode. Doom's theme pack has
+no Everforest, so it comes from =doom-everforest-theme= in =packages.el=, which
+builds on the doom-themes framework and so styles vertico, corfu, lsp, vterm and
+the modeline for free. Light by default, because most of my day is in a bright
+room. =SPC t D= switches to dark, which is set up in [[*Theme toggle]].
+
+The package never adds itself to =custom-theme-load-path=, so =load-theme= can't
+find it until its build directory is added here.
 
 #+begin_src emacs-lisp
-(setq doom-theme 'doom-solarized-light)
+(add-to-list 'custom-theme-load-path
+             (file-name-directory (locate-library "doom-everforest-theme")))
+(setq doom-theme 'doom-everforest-light)
+#+end_src
+
+The contrast, =hard=, =medium= or =soft=, lives in =~/.config/everforest/contrast=,
+which Ghostty and opencode share. Change it with the =everforest= script, which
+rebuilds their themes and calls =my/everforest-reload= here. Both themes read
+their contrast variable when they load, so it is set before the theme loads, and
+reloading the theme applies a new value.
+
+#+begin_src emacs-lisp
+(defun my/everforest-read-contrast ()
+  "Set both themes' contrast from the shared file, or medium if it is missing."
+  (let* ((file (expand-file-name "~/.config/everforest/contrast"))
+         (contrast (if (file-readable-p file)
+                       (string-trim (with-temp-buffer
+                                      (insert-file-contents file)
+                                      (buffer-string)))
+                     "medium")))
+    (setq doom-everforest-background contrast
+          doom-everforest-light-background contrast)))
+
+(defun my/everforest-reload ()
+  "Re-read the shared Everforest contrast and reload the current theme."
+  (my/everforest-read-contrast)
+  (load-theme doom-theme t)
+  doom-everforest-background)
+
+(my/everforest-read-contrast)
+#+end_src
+
+Both themes build their selection by lightening =bg-alt=, the darker background
+solaire gives non-file buffers like =*scratch*= and agent-shell. The result lands
+almost on top of that background, so selected text disappears there. Everforest's
+own selection color, =bg_visual=, stands out on both backgrounds, and the themes
+already carry it as =base4=.
+
+#+begin_src emacs-lisp
+(custom-theme-set-faces! '(doom-everforest doom-everforest-light)
+  `(region :background ,(doom-color 'base4)))
 #+end_src
 
 ** Line numbers
@@ -827,12 +873,12 @@ documents a visible outline.
 
 ** Theme toggle
 
-Solarized Light suits a bright room, and Peacock suits a dark one. =SPC t D=
-switches between them.
+Everforest Light suits a bright room, and Everforest Dark suits a dark one.
+=SPC t D= switches between them.
 
 #+begin_src emacs-lisp
-(defvar my/light-theme 'doom-solarized-light)
-(defvar my/dark-theme 'doom-peacock)
+(defvar my/light-theme 'doom-everforest-light)
+(defvar my/dark-theme 'doom-everforest)
 
 (defun my/toggle-theme ()
   "Toggle between the light and dark Doom themes."

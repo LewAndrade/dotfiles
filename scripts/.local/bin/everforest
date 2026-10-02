@@ -1,0 +1,134 @@
+#!/usr/bin/env python3
+"""Switch Everforest's contrast in every app at once.
+
+    everforest [hard|medium|soft]
+
+With a level, writes it to ~/.config/everforest/contrast. Then, with or
+without one, builds the Ghostty and opencode themes for the stored level from
+the official palette, and reloads the theme in Emacs if it is running. Emacs
+reads the same file at startup, so all three always agree.
+
+Colors come from https://github.com/sainnhe/everforest/blob/master/palette.md.
+Only the backgrounds change with the level. Accents and greys do not.
+"""
+import json
+import subprocess
+import sys
+from pathlib import Path
+
+LEVELS = ("hard", "medium", "soft")
+CONFIG = Path.home() / ".config"
+CONTRAST_FILE = CONFIG / "everforest" / "contrast"
+GHOSTTY_THEMES = CONFIG / "ghostty" / "themes"
+OPENCODE_THEME = CONFIG / "opencode" / "themes" / "everforest-dotfiles.json"
+
+BG_NAMES = ("bg_dim", "bg0", "bg1", "bg2", "bg3", "bg4", "bg5",
+            "bg_visual", "bg_red", "bg_yellow", "bg_green", "bg_blue", "bg_purple")
+
+BACKGROUNDS = {
+    "dark": {
+        "hard":   "#1e2326 #272e33 #2e383c #374145 #414b50 #495156 #4f5b58 #4c3743 #493b40 #45443c #3c4841 #384b55 #463f48",
+        "medium": "#232a2e #2d353b #343f44 #3d484d #475258 #4f585e #56635f #543a48 #514045 #4d4c43 #425047 #3a515d #4a444e",
+        "soft":   "#293136 #333c43 #3a464c #434f55 #4d5960 #555f66 #5d6b66 #5c3f4f #59464c #55544a #48584e #3f5865 #4e4953",
+    },
+    "light": {
+        "hard":   "#f2efdf #fffbef #f8f5e4 #f2efdf #edeada #e8e5d5 #bec5b2 #f0f2d4 #ffe7de #fef2d5 #f3f5d9 #ecf5ed #fceced",
+        "medium": "#efebd4 #fdf6e3 #f4f0d9 #efebd4 #e6e2cc #e0dcc7 #bdc3af #eaedc8 #fde3da #faedcd #f0f1d2 #e9f0e9 #fae8e2",
+        "soft":   "#e5dfc5 #f3ead3 #eae4ca #e5dfc5 #ddd8be #d8d3ba #b9c0ab #e1e4bd #fadbd0 #f1e4c5 #e5e6c5 #e1e7dd #f1ddd4",
+    },
+}
+
+FOREGROUNDS = {
+    "dark": dict(fg="#d3c6aa", red="#e67e80", orange="#e69875", yellow="#dbbc7f",
+                 green="#a7c080", aqua="#83c092", blue="#7fbbb3", purple="#d699b6",
+                 grey0="#7a8478", grey1="#859289", grey2="#9da9a0"),
+    "light": dict(fg="#5c6a72", red="#f85552", orange="#f57d26", yellow="#dfa000",
+                  green="#8da101", aqua="#35a77c", blue="#3a94c5", purple="#df69ba",
+                  grey0="#a6b0a0", grey1="#939f91", grey2="#829181"),
+}
+
+
+def palette(mode, level):
+    p = dict(zip(BG_NAMES, BACKGROUNDS[mode][level].split()))
+    p.update(FOREGROUNDS[mode])
+    return p
+
+
+def ghostty_theme(mode, p):
+    # Everforest's own terminal colors, from colors/everforest.vim: black and
+    # white swap between modes, and bright colors repeat the normal ones. Bright
+    # black is the exception. Upstream uses bg3, which leaves dim text such as
+    # fish autosuggestions unreadable on a dark background, so it takes grey1,
+    # the palette's color for comments and disabled text.
+    black, white = (p["bg3"], p["fg"]) if mode == "dark" else (p["fg"], p["bg3"])
+    normal = [black, p["red"], p["green"], p["yellow"], p["blue"], p["purple"], p["aqua"], white]
+    bright = [p["grey1"]] + normal[1:]
+    lines = [f"palette = {i}={c}" for i, c in enumerate(normal + bright)]
+    lines += [
+        f"background = {p['bg0']}",
+        f"foreground = {p['fg']}",
+        f"selection-background = {p['bg_visual']}",
+        f"selection-foreground = {p['fg']}",
+    ]
+    return "\n".join(lines) + "\n"
+
+
+def opencode_theme(level):
+    # Same keys and colors as opencode's built-in everforest theme, with two
+    # fixes: its panel uses soft bg0 at every level, and its diff colors come
+    # from other themes. Here the panel is bg_dim and diffs use the palette.
+    roles = {
+        "primary": "green", "secondary": "blue", "accent": "purple",
+        "error": "red", "warning": "orange", "success": "green", "info": "aqua",
+        "text": "fg", "textMuted": "grey0",
+        "background": "bg0", "backgroundPanel": "bg_dim", "backgroundElement": "bg1",
+        "border": "grey1", "borderActive": "grey2", "borderSubtle": "grey0",
+        "diffAdded": "green", "diffRemoved": "red", "diffContext": "grey1",
+        "diffHunkHeader": "grey1", "diffHighlightAdded": "green",
+        "diffHighlightRemoved": "red", "diffAddedBg": "bg_green",
+        "diffRemovedBg": "bg_red", "diffContextBg": "bg_dim", "diffLineNumber": "grey0",
+        "diffAddedLineNumberBg": "bg_green", "diffRemovedLineNumberBg": "bg_red",
+        "markdownText": "fg", "markdownHeading": "purple", "markdownLink": "green",
+        "markdownLinkText": "aqua", "markdownCode": "green", "markdownBlockQuote": "yellow",
+        "markdownEmph": "yellow", "markdownStrong": "orange",
+        "markdownHorizontalRule": "grey0", "markdownListItem": "green",
+        "markdownListEnumeration": "aqua", "markdownImage": "green",
+        "markdownImageText": "aqua", "markdownCodeBlock": "fg",
+        "syntaxComment": "grey0", "syntaxKeyword": "purple", "syntaxFunction": "green",
+        "syntaxVariable": "red", "syntaxString": "green", "syntaxNumber": "orange",
+        "syntaxType": "yellow", "syntaxOperator": "aqua", "syntaxPunctuation": "fg",
+    }
+    dark, light = palette("dark", level), palette("light", level)
+    theme = {r: {"dark": dark[c], "light": light[c]} for r, c in roles.items()}
+    return json.dumps({"$schema": "https://opencode.ai/theme.json", "theme": theme}, indent=2) + "\n"
+
+
+def write(path, text):
+    # Writing through the path keeps stow's symlink, so the file in the
+    # dotfiles repo is the one that changes.
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text)
+    print(f"wrote {path}")
+
+
+def main(args):
+    if len(args) > 1 or (args and args[0] not in LEVELS):
+        sys.exit(f"usage: everforest [{'|'.join(LEVELS)}]")
+    if args:
+        write(CONTRAST_FILE, args[0] + "\n")
+    level = CONTRAST_FILE.read_text().strip()
+    if level not in LEVELS:
+        sys.exit(f"everforest: {CONTRAST_FILE} holds {level!r}, not one of {', '.join(LEVELS)}")
+
+    for mode in ("dark", "light"):
+        write(GHOSTTY_THEMES / f"everforest-{mode}", ghostty_theme(mode, palette(mode, level)))
+    write(OPENCODE_THEME, opencode_theme(level))
+
+    reloaded = subprocess.run(["emacsclient", "--eval", "(my/everforest-reload)"],
+                              capture_output=True).returncode == 0
+    print(f"contrast is {level}. Emacs {'reloaded' if reloaded else 'not running, picks it up at start'}.")
+    print("Reload Ghostty with cmd+shift+, and restart opencode.")
+
+
+if __name__ == "__main__":
+    main(sys.argv[1:])

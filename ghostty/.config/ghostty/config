@@ -1,5 +1,6 @@
 font-family = Maple Mono NF 
 font-size = 16
 keybind = global:cmd+ctrl+alt+shift+t=toggle_quick_terminal
-# theme = light:Everforest Light Med,dark:Everforest Dark Hard
-theme = light:bamboo_light,dark:bamboo_multiplex
+# Built by `everforest` from the official palette, at the contrast stored in
+# ~/.config/everforest/contrast. Run `everforest soft` (or hard, medium) to change it.
+theme = light:everforest-light,dark:everforest-dark
