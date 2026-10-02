@@ -8,11 +8,13 @@ My configuration files, one GNU Stow package per tool. macOS only.
 |------------|-------------------------------------|------------------------------------------------|
 | `doom`     | `~/.config/doom`                    | Literate Doom Emacs config. Edit `config.org`. |
 | `nvim`     | `~/.config/nvim`                    | LazyVim based.                                 |
-| `ghostty`  | `~/.config/ghostty`                 | Terminal, with two bamboo themes.              |
+| `ghostty`  | `~/.config/ghostty`                 | Terminal. Everforest themes come from `everforest`. |
+| `opencode` | `~/.config/opencode/themes`         | Only the Everforest theme. The rest stays local. |
+| `everforest` | `~/.config/everforest/contrast`   | Shared Everforest contrast. See below.         |
 | `fish`     | `~/.config/fish`                    | Shell. Plugins come from fisher, not from here.|
 | `starship` | `~/.config/starship.toml`           | Prompt.                                        |
 | `git`      | `~/.gitconfig`, `~/.config/git`     | Identity stays out of this repo. See below.    |
-| `scripts`  | `~/.local/bin`                      | `org-backup` commits and pushes my org notes.  |
+| `scripts`  | `~/.local/bin`                      | `org-backup` commits and pushes my org notes. `everforest` switches the theme contrast. |
 
 ## Install
 
@@ -22,7 +24,7 @@ My configuration files, one GNU Stow package per tool. macOS only.
 
 ```sh
 cd ~/dotfiles
-stow --no-folding -t ~ doom nvim ghostty fish starship git scripts
+stow --no-folding -t ~ doom nvim ghostty fish starship git scripts everforest opencode
 ```
 
 Link one package on its own with `stow --no-folding -t ~ doom`.
@@ -35,6 +37,19 @@ out of this repo.
 
 If stow reports a conflict, a real file already sits at that path. Move it away,
 then stow again.
+
+## Everforest
+
+Emacs, Ghostty and opencode all use Everforest at one contrast, `hard`, `medium`
+or `soft`, stored in `~/.config/everforest/contrast`. Switch all three with:
+
+```sh
+everforest soft
+```
+
+The script builds the Ghostty and opencode themes from the official palette and
+reloads the theme in Emacs. Reload Ghostty with `cmd+shift+,` and restart
+opencode. Run `everforest` with no argument to rebuild at the stored contrast.
 
 ## Git identity
 

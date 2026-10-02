@@ -13,6 +13,11 @@
 (package! treemacs-all-the-icons)
 (package! posframe)
 
+;; Doom's theme pack has no Everforest. This port builds on doom-themes, so it
+;; inherits face support for vertico, corfu, lsp, vterm and the modeline.
+(package! doom-everforest-theme
+  :recipe (:host github :repo "Cardoso1994/doom-everforest-theme"))
+
 ;; No built-in Doom module for Groovy.
 (package! groovy-mode)
 
