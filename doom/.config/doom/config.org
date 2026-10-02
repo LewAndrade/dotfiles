@@ -1371,13 +1371,31 @@ name, so a name generated once keeps applying without being regenerated.
 A new session has no label and opens as =Claude Agent @ DIR=. There is nothing
 to name it from until the first prompt lands.
 
-#+begin_src emacs-lisp
-(defvar my/agent-shell-label-model "claude-4-5-haiku"
-  "Model id used to generate session labels.")
+Labels come from opencode's built-in =title= agent on GPT-6 Luna with no
+reasoning. It took about 3 seconds a label against 11 for Haiku through
+=claude -p=, at roughly a fortieth of the cost. Haiku stays as the fallback
+when opencode fails or hangs, which it does when its background service dies.
 
+opencode saves a session for every run and has no flag to stop it. Sessions
+are filed under the directory they ran in, so running from one dedicated
+directory keeps them out of every project's session list.
+
+#+begin_src emacs-lisp
 (defvar my/agent-shell-label-command
-  (list "claude" "-p" "--no-session-persistence" "--model" my/agent-shell-label-model)
+  '("opencode" "run" "--agent" "title" "--model" "openai/gpt-6-luna#none"
+    "--title" "agent-shell-label" "--format" "json")
   "Command run to generate a session label. The prompt is appended.")
+
+(defvar my/agent-shell-label-fallback-command
+  '("claude" "-p" "--no-session-persistence" "--model" "claude-4-5-haiku")
+  "Command tried when `my/agent-shell-label-command' fails or times out.")
+
+(defvar my/agent-shell-label-directory
+  (expand-file-name "~/.cache/agent-shell-labels/")
+  "Directory the labeller runs in, so its opencode sessions collect here.")
+
+(defvar my/agent-shell-label-timeout 20
+  "Seconds to wait for one labeller command before giving up on it.")
 
 (defvar my/agent-shell-label-context-chars 9000
   "Total context budget per session, in characters, when labelling.")
@@ -1556,35 +1574,84 @@ Errors are reported rather than dropped, which is the difference from
 =agent-shell-hq-label=. The =API Error= guard matters: the gateway answers with
 a normal exit code, so without it a rejection becomes the buffer name.
 
+opencode runs with =--format json= because its plain output adds a banner line
+before the answer. Each line is one event, and the label is the text of the
+=text= events. The fallback prints the bare label, which is used as it is.
+
 #+begin_src emacs-lisp
-(defun my/agent-shell--label-run (context callback)
-  "Ask the labeller to describe CONTEXT.
-Calls CALLBACK with (LABEL ERROR); exactly one is non-nil."
-  (let* ((output "")
+(defun my/agent-shell--label-text (output)
+  "Return the label in OUTPUT, the standard output of a labeller command."
+  (let ((parts nil)
+        (events nil))
+    (dolist (line (split-string output "\n" t))
+      (let ((event (ignore-errors (json-parse-string line :object-type 'alist))))
+        (when (consp event)
+          (setq events t)
+          (when (equal (alist-get 'type event) "text")
+            (push (alist-get 'text (alist-get 'part event)) parts)))))
+    (string-trim (if events (apply #'concat (nreverse parts)) output))))
+
+(defun my/agent-shell--label-run-command (command prompt callback)
+  "Run COMMAND with PROMPT appended, then call CALLBACK with (LABEL ERROR).
+Gives up after `my/agent-shell-label-timeout' seconds."
+  (make-directory my/agent-shell-label-directory t)
+  (let* ((default-directory my/agent-shell-label-directory)
+         (output "")
+         (finished nil)
+         (timer nil)
+         (finish (lambda (label err)
+                   (unless finished
+                     (setq finished t)
+                     (when timer (cancel-timer timer))
+                     (funcall callback label err))))
          (proc (make-process
                 :name "agent-shell-label"
                 :buffer nil
                 :noquery t
                 :connection-type 'pipe
-                :command (append my/agent-shell-label-command
-                                 (list (concat my/agent-shell-label-prompt context)))
+                :command (append command (list prompt))
                 :filter (lambda (_proc chunk)
                           (setq output (concat output chunk)))
                 :sentinel
                 (lambda (proc event)
                   (unless (process-live-p proc)
-                    (let ((text (string-trim output)))
+                    (let ((text (my/agent-shell--label-text output)))
                       (if (and (string-prefix-p "finished" event)
                                (not (string-empty-p text))
                                (not (string-match-p "\\`API Error" text)))
-                          (funcall callback text nil)
-                        (funcall callback nil
+                          (funcall finish text nil)
+                        (funcall finish nil
                                  (string-trim
-                                  (concat (string-trim event) " " text))))))))))
+                                  (concat (string-trim event) " "
+                                          (string-trim output)))))))))))
     ;; `claude -p' waits on stdin when it is a pipe, so the sentinel never runs
     ;; unless stdin is closed here.
     (process-send-eof proc)
+    (setq timer
+          (run-with-timer
+           my/agent-shell-label-timeout nil
+           (lambda ()
+             (when (process-live-p proc)
+               ;; Report first: deleting the process runs the sentinel, and
+               ;; only the first report reaches CALLBACK.
+               (funcall finish nil (format "timed out after %ds"
+                                           my/agent-shell-label-timeout))
+               (delete-process proc)))))
     proc))
+
+(defun my/agent-shell--label-run (context callback)
+  "Ask the labeller to describe CONTEXT, falling back when it fails.
+Calls CALLBACK with (LABEL ERROR); exactly one is non-nil."
+  (let ((prompt (concat my/agent-shell-label-prompt context)))
+    (my/agent-shell--label-run-command
+     my/agent-shell-label-command prompt
+     (lambda (label err)
+       (if label
+           (funcall callback label nil)
+         (my/agent-shell--label-progress
+          "agent-shell: labeller failed (%s), trying the fallback" err)
+         (my/agent-shell--label-run-command
+          my/agent-shell-label-fallback-command prompt callback))))))
 
 (defun my/agent-shell--label-async (session-id files callback)
   "Generate and store a label for SESSION-ID drawn from FILES.
@@ -2836,10 +2903,19 @@ Notifications:
 
 Labels:
 
-- The model id is =claude-4-5-haiku=. The =haiku= alias resolves to
+- =--agent title= works with =opencode run=, although the docs say hidden agents
+  cannot be selected. Its own prompt caps titles at 50 characters, so labels
+  can run to 9 or 10 words despite the 8 asked for.
+- =--title= is needed. Without it, opencode makes a second model call to title
+  its own session, which doubles the cost of a label.
+- opencode labels need its background service. When the service dies, every
+  =opencode run= waits forever, which is what the timeout and fallback cover.
+  =opencode service restart= brings it back.
+- The fallback model id is =claude-4-5-haiku=. The =haiku= alias resolves to
   =claude-haiku-4-5=, which this gateway rejects with a 400.
-- =--no-session-persistence= is mandatory. Without it, every label writes a real
-  session into the store that the start picker reads. It once added 89 entries.
+- =--no-session-persistence= is mandatory for the fallback. Without it, every
+  label writes a real session into the store that the start picker reads. It
+  once added 89 entries.
 - Sample from three offsets. A head only sample labelled a 368 KB session from
   the =/context= command it opened with.
 - Claude Code writes an =ai-title= only for =cli= sessions. agent-shell sessions
