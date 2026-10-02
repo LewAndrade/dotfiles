@@ -102,6 +102,19 @@ already carry it as =base4=.
   `(region :background ,(doom-color 'base4)))
 #+end_src
 
+agent-shell stripes every other table row with =lazy-highlight=, the face for
+other search matches, which these themes paint as dim grey text on a strong blue
+or green band. The stripe takes =bg0= instead, with normal text. agent-shell
+buffers sit on solaire's =bg_dim=, and =bg0= stands out from it equally in light
+and dark, where the palette's subtler =bg1= nearly vanishes in light. Search
+matches keep =lazy-highlight= as it is.
+
+#+begin_src emacs-lisp
+(custom-theme-set-faces! '(doom-everforest doom-everforest-light)
+  `(agent-shell-markdown-table-zebra :inherit agent-shell-markdown-table
+                                     :background ,(doom-color 'bg)))
+#+end_src
+
 ** Line numbers
 
 =t= means absolute numbers. =relative= and =visual= are the other choices, and
