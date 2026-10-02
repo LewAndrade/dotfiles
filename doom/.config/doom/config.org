@@ -115,6 +115,95 @@ matches keep =lazy-highlight= as it is.
                                      :background ,(doom-color 'bg)))
 #+end_src
 
+agent-shell draws its header as one image and hovers it with
+=mode-line-highlight=, which these themes fill with solid blue in light and aqua
+in dark. The agent and model names are drawn in that same blue, so in light they
+vanish on hover. In agent-shell buffers only, the hover takes =bg0= with normal
+text instead: the header's colors are the theme's own, made to be read on =bg0=,
+and =bg0= is clearly apart from the header in both modes. The mode line hover
+elsewhere keeps =mode-line-highlight=. A face rather than raw colors keeps the
+remap right across =SPC t D=.
+
+#+begin_src emacs-lisp
+(defface my/agent-shell-hover '((t :inherit highlight))
+  "Hover face for agent-shell's header, in place of `mode-line-highlight'.")
+
+(custom-theme-set-faces! '(doom-everforest doom-everforest-light)
+  `(my/agent-shell-hover :inherit unspecified
+                         :background ,(doom-color 'bg) :foreground ,(doom-color 'fg)))
+
+(defun my/agent-shell-remap-hover ()
+  "Hover agent-shell's header with `my/agent-shell-hover'."
+  (face-remap-add-relative 'mode-line-highlight 'my/agent-shell-hover))
+
+(add-hook 'agent-shell-mode-hook #'my/agent-shell-remap-hover)
+#+end_src
+
+The themes leave magit's diffs to doom-themes' shared rules, which assume a
+different palette layout: removed lines mix red with the grey-green =bg5= and
+turn brown, every changed line is bold red or green text, changed words swap
+text and background into solid blocks, and the current hunk's heading is solid
+pink. Everforest itself tints changed lines with =bg_green= and =bg_red= and
+keeps the text normal, so diffs do that here. The current hunk carries a tenth
+more of its accent, changed words a quarter more in bold, and hunk headings use
+=bg_purple=, which Everforest leaves unused. Text stays =fg= throughout: the light
+accents read at about 2:1 on these tints, against 3.4:1 or better for =fg=.
+
+The port carries none of those tints, so they come from
+=~/.config/everforest/palette.json=, which the =everforest= script writes at the
+shared contrast. Doom's =custom-theme-set-faces!= takes faces one by one, so this
+hooks the same =doom-customize-theme-hook= it uses, and runs on every theme load.
+
+#+begin_src emacs-lisp
+(defun my/everforest-palette (mode)
+  "Everforest's palette for MODE, \"dark\" or \"light\", at the shared contrast."
+  (let ((file (expand-file-name "~/.config/everforest/palette.json")))
+    (when (file-readable-p file)
+      (gethash mode (with-temp-buffer
+                      (insert-file-contents file)
+                      (json-parse-buffer))))))
+
+(defun my/everforest-diff-faces-h ()
+  "Tint magit diffs the way Everforest does, from the shared palette.
+Only the theme just loaded, which leads `custom-enabled-themes': while
+`SPC t D' switches, the old theme is still enabled, and faces written to it
+then outlive its disabling and shadow the new theme's."
+  (let ((theme (car custom-enabled-themes)))
+    (when-let* (((memq theme '(doom-everforest doom-everforest-light)))
+                (palette (my/everforest-palette
+                          (if (eq theme 'doom-everforest) "dark" "light"))))
+      (cl-flet ((color (name) (gethash name palette))
+                (tint (accent base amount)
+                  (doom-blend (gethash accent palette) (gethash base palette) amount)))
+        (let ((fg (color "fg")))
+          (custom-theme-set-faces
+           theme
+           `(magit-diff-added
+             ((t :background ,(color "bg_green") :foreground ,fg :weight normal :extend t)))
+           `(magit-diff-added-highlight
+             ((t :background ,(tint "green" "bg_green" 0.1) :foreground ,fg
+                 :weight normal :extend t)))
+           `(magit-diff-removed
+             ((t :background ,(color "bg_red") :foreground ,fg :weight normal :extend t)))
+           `(magit-diff-removed-highlight
+             ((t :background ,(tint "red" "bg_red" 0.1) :foreground ,fg
+                 :weight normal :extend t)))
+           `(diff-refine-added
+             ((t :background ,(tint "green" "bg_green" 0.25) :foreground ,fg
+                 :weight bold :inverse-video nil)))
+           `(diff-refine-removed
+             ((t :background ,(tint "red" "bg_red" 0.25) :foreground ,fg
+                 :weight bold :inverse-video nil)))
+           `(magit-diff-hunk-heading
+             ((t :background ,(color "bg_purple") :foreground ,fg
+                 :weight normal :extend t)))
+           `(magit-diff-hunk-heading-highlight
+             ((t :background ,(tint "purple" "bg_purple" 0.15) :foreground ,fg
+                 :weight bold :extend t)))))))))
+
+(add-hook 'doom-customize-theme-hook #'my/everforest-diff-faces-h 100)
+#+end_src
+
 ** Line numbers
 
 =t= means absolute numbers. =relative= and =visual= are the other choices, and

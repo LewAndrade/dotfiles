@@ -5,8 +5,9 @@
 
 With a level, writes it to ~/.config/everforest/contrast. Then, with or
 without one, builds the Ghostty and opencode themes for the stored level from
-the official palette, and reloads the theme in Emacs if it is running. Emacs
-reads the same file at startup, so all three always agree.
+the official palette, writes that palette to ~/.config/everforest/palette.json
+for the colors the Emacs port lacks, and reloads the theme in Emacs if it is
+running. Emacs reads the same files at startup, so all three always agree.
 
 Colors come from https://github.com/sainnhe/everforest/blob/master/palette.md.
 Only the backgrounds change with the level. Accents and greys do not.
@@ -19,6 +20,7 @@ from pathlib import Path
 LEVELS = ("hard", "medium", "soft")
 CONFIG = Path.home() / ".config"
 CONTRAST_FILE = CONFIG / "everforest" / "contrast"
+PALETTE_FILE = CONFIG / "everforest" / "palette.json"
 GHOSTTY_THEMES = CONFIG / "ghostty" / "themes"
 OPENCODE_THEME = CONFIG / "opencode" / "themes" / "everforest-dotfiles.json"
 
@@ -123,6 +125,7 @@ def main(args):
     for mode in ("dark", "light"):
         write(GHOSTTY_THEMES / f"everforest-{mode}", ghostty_theme(mode, palette(mode, level)))
     write(OPENCODE_THEME, opencode_theme(level))
+    write(PALETTE_FILE, json.dumps({m: palette(m, level) for m in ("dark", "light")}, indent=2) + "\n")
 
     reloaded = subprocess.run(["emacsclient", "--eval", "(my/everforest-reload)"],
                               capture_output=True).returncode == 0
