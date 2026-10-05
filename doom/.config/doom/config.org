@@ -149,7 +149,22 @@ more of its accent, changed words a quarter more in bold, and hunk headings use
 =bg_purple=, which Everforest leaves unused. Text stays =fg= throughout: the light
 accents read at about 2:1 on these tints, against 3.4:1 or better for =fg=.
 
-The port carries none of those tints, so they come from
+Markdown code has the same trouble. Inline code and code blocks sit on =base3=,
+which here is =bg5= again, and inline code adds green text, which reads at 1.6:1
+on it in light. Both take =bg2= instead, and inline code keeps =fg=: 4.2:1 in
+light and 5:1 in dark, while =bg2= still marks code off from the page.
+
+In light, =bg2= is the very color of =bg_dim=, which the theme also uses for the
+current line in file buffers, so code there looked like a highlighted line.
+Light's current line takes =bg1= instead, Everforest's own current-line color.
+Dark keeps its current line, which already differs from =bg2=.
+
+agent-shell's code blocks take their background from =org-block=, which in dark
+is =bg_dim=, the very background solaire gives agent-shell, so blocks vanish.
+In dark they take =bg2=, like markdown code blocks. =org-block= stays as it is,
+since it reads well in org files, and light's agent-shell blocks already do.
+
+The port carries none of those colors, so they come from
 =~/.config/everforest/palette.json=, which the =everforest= script writes at the
 shared contrast. Doom's =custom-theme-set-faces!= takes faces one by one, so this
 hooks the same =doom-customize-theme-hook= it uses, and runs on every theme load.
@@ -163,8 +178,8 @@ hooks the same =doom-customize-theme-hook= it uses, and runs on every theme load
                       (insert-file-contents file)
                       (json-parse-buffer))))))
 
-(defun my/everforest-diff-faces-h ()
-  "Tint magit diffs the way Everforest does, from the shared palette.
+(defun my/everforest-palette-faces-h ()
+  "Color magit diffs and markdown code from the shared Everforest palette.
 Only the theme just loaded, which leads `custom-enabled-themes': while
 `SPC t D' switches, the old theme is still enabled, and faces written to it
 then outlive its disabling and shadow the new theme's."
@@ -175,7 +190,8 @@ then outlive its disabling and shadow the new theme's."
       (cl-flet ((color (name) (gethash name palette))
                 (tint (accent base amount)
                   (doom-blend (gethash accent palette) (gethash base palette) amount)))
-        (let ((fg (color "fg")))
+        (let ((fg (color "fg"))
+              (dark (eq theme 'doom-everforest)))
           (custom-theme-set-faces
            theme
            `(magit-diff-added
@@ -199,9 +215,21 @@ then outlive its disabling and shadow the new theme's."
                  :weight normal :extend t)))
            `(magit-diff-hunk-heading-highlight
              ((t :background ,(tint "purple" "bg_purple" 0.15) :foreground ,fg
-                 :weight bold :extend t)))))))))
+                 :weight bold :extend t)))
+           `(markdown-code-face
+             ((t :background ,(color "bg2") :extend t)))
+           `(markdown-inline-code-face
+             ((t :inherit markdown-code-face :foreground ,fg :extend nil)))
+           ;; Both themes set these, each its own way: `SPC t D' leaves the
+           ;; old theme enabled underneath, so a face only one theme set would
+           ;; show through in the other.
+           `(agent-shell-markdown-source-block
+             ((t :inherit org-block :foreground unspecified :extend t
+                 :background ,(if dark (color "bg2") 'unspecified))))
+           `(hl-line
+             ((t :background ,(color (if dark "bg_dim" "bg1")) :extend t)))))))))
 
-(add-hook 'doom-customize-theme-hook #'my/everforest-diff-faces-h 100)
+(add-hook 'doom-customize-theme-hook #'my/everforest-palette-faces-h 100)
 #+end_src
 
 ** Line numbers
