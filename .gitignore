@@ -2,3 +2,9 @@
 
 # Tangled from doom/.config/doom/config.org, never edited by hand.
 doom/.config/doom/config.el
+
+# Local extensions belong outside the repository; ignore accidental copies.
+doom/.config/doom/+*.el
+doom/.config/doom/*.org
+!doom/.config/doom/config.org
+doom/.config/doom/private/

@@ -2533,3 +2533,15 @@ several are not obvious.
 | =agent-shell-queue=          | =agent-shell-prompt-queue= already ships built in                           |
 | =macext=                     | Good, but unlicensed. Only its notifications were wanted                   |
 | =agent-shell-pet=            | Installed, tried and removed the same day                                  |
+
+* Local overrides
+
+Machine-specific integrations stay outside this repository. If
+=~/.config/doom-private/local.el= exists, load it after the shared configuration.
+Keep private Org files and their generated Lisp in that external directory.
+
+#+begin_src emacs-lisp
+(let ((local-config (expand-file-name "~/.config/doom-private/local.el")))
+  (when (file-readable-p local-config)
+    (load local-config nil 'nomessage)))
+#+end_src
