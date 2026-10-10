@@ -697,6 +697,808 @@ subscripts or link targets.
         org-appear-autolinks t))
 #+end_src
 
+** Capture and agenda
+
+Work and Personal are file categories, not TODO states. Quick tasks and notes
+live in =work.org= and =personal.org=. Events live in =calendar-work.org= and
+=calendar-personal.org=, which are excluded from the notes backup. Existing
+notes stay in place; the =l= agenda command is a separate migration view.
+
+=SPC n d= opens Today; =SPC n r= opens Review, with Today above the other open
+tasks. Tasks already in Today are not repeated below; undated and future tasks
+remain visible. =SPC X= or =SPC n n= opens Work/Personal capture, then Task/Note/Timed event/
+All-day event. Capture keeps
+Doom's existing popup. Dates are optional for tasks and required for events.
+Timed events ask for a start date/time and a duration (default =1h=), with a live
+end-time preview instead of a second date picker. Bare durations mean minutes.
+The cheatsheet is =~/Documents/org/org-agenda.org=.
+Agenda styling borrows the category icons and quiet layout from
+[[https://github.com/psamim/dotfiles/blob/master/doom/config.el][psamim's configuration]], but keeps full task states, overdue warnings, and
+the sync status. Nerd Icons are display-only; terminal agendas keep text labels.
+
+#+begin_src emacs-lisp
+;; BEGIN org-workflow
+(defun my/org-file (name)
+  "Return the absolute path of NAME under `org-directory'."
+  (expand-file-name name org-directory))
+
+(defun my/org-profile-files (profile)
+  "Return the task and calendar files for PROFILE, work or personal."
+  (unless (member profile '("work" "personal"))
+    (user-error "Choose Work or Personal"))
+  (list (my/org-file (concat profile ".org"))
+        (my/org-file (concat "calendar-" profile ".org"))))
+
+(defun my/org-event-duration-minutes (duration)
+  "Convert DURATION to a positive whole number of elapsed minutes."
+  (require 'org-duration)
+  ;; Org's own duration syntax uses `min' for minutes and `m' for months.
+  ;; In this capture prompt, `m' is the familiar minutes shorthand instead.
+  (let* ((input (downcase (string-trim duration)))
+         (input (replace-regexp-in-string "\\(?:hours?\\|hrs?\\)\\b" "h" input))
+         (input (replace-regexp-in-string "\\(?:minutes?\\|mins?\\|m\\)\\b" "min" input))
+         (input (replace-regexp-in-string "[ \t]+and[ \t]+" " " input))
+         ;; A bare number after hours is the minutes part: 1h30 means 1h30min.
+         (input (if (string-match-p "\\`[0-9]+[ \t]*h[ \t]*[0-9]+\\'" input)
+                    (concat input "min") input))
+         (minutes (condition-case nil
+                     (org-duration-to-minutes input t)
+                   (error nil))))
+    (unless (and (numberp minutes) (> minutes 0) (= minutes (floor minutes)))
+      (user-error "Enter a positive duration: 30 minutes, 1 hour or 1h30; bare numbers mean minutes"))
+    (truncate minutes)))
+
+(defun my/org-event-duration-preview (start input)
+  "Show the calculated end for INPUT, or a hint while the duration is incomplete."
+  (let ((default (string-empty-p (string-trim input))))
+    (condition-case nil
+        (let* ((minutes (my/org-event-duration-minutes (if default "1h" input)))
+               (end (time-add start (seconds-to-time (* minutes 60)))))
+          (propertize (concat "  => Ends " (format-time-string "%Y-%m-%d %a %H:%M" end)
+                              (when default " (default: 1h)"))
+                      'face 'shadow))
+      (user-error
+       (propertize "  => Try 30 minutes, 1 hour or 1h30; numbers mean minutes"
+                   'face 'warning)))))
+
+(defun my/org-read-event-duration (start)
+  "Read an elapsed duration, updating its end-time preview after each command."
+  (let (preview-buffer preview-overlay update-preview)
+    (unwind-protect
+        (let ((input
+               (minibuffer-with-setup-hook
+                   (lambda ()
+                     (setq preview-buffer (current-buffer)
+                           preview-overlay (make-overlay (point-max) (point-max) nil t t)
+                           update-preview
+                           (lambda ()
+                             (move-overlay preview-overlay (point-max) (point-max))
+                             (overlay-put preview-overlay 'after-string
+                                          (my/org-event-duration-preview
+                                           start (minibuffer-contents-no-properties)))))
+                     (add-hook 'post-command-hook update-preview nil t)
+                     (funcall update-preview))
+                 (read-string "Duration (minutes or hours; RET: 1h): " nil nil "1h"))))
+          (if (string-empty-p (string-trim input)) "1h" input))
+      ;; Keep neither the display nor its hook after RET, C-g, or a failed read.
+      (when (buffer-live-p preview-buffer)
+        (with-current-buffer preview-buffer
+          (remove-hook 'post-command-hook update-preview t)))
+      (when (overlayp preview-overlay) (delete-overlay preview-overlay)))))
+
+(defun my/org-capture-timed-range ()
+  "Prompt once for the start, then calculate the end from an elapsed duration."
+  (let ((start (org-read-date t t nil "Event start (date and time): "))
+        minutes)
+    (while (null minutes)
+      (let ((duration (my/org-read-event-duration start)))
+        (condition-case problem
+            (setq minutes (my/org-event-duration-minutes duration))
+          (user-error (message "%s" (error-message-string problem))))))
+    (concat (format-time-string "<%Y-%m-%d %a %H:%M>" start)
+            "--"
+            (format-time-string "<%Y-%m-%d %a %H:%M>"
+                                (time-add start (seconds-to-time (* minutes 60)))))))
+
+(defun my/org-capture-all-day-range ()
+  "Prompt for inclusive all-day dates; default the end to the start."
+  (let* ((start (org-read-date nil t nil "All-day start date: "))
+         (end (org-read-date nil t nil "End date (RET: same day): " start))
+         (start-date (format-time-string "%Y-%m-%d" start))
+         (end-date (format-time-string "%Y-%m-%d" end)))
+    (when (string< end-date start-date)
+      (user-error "End date cannot be before the start date"))
+    (if (equal start-date end-date)
+        (format-time-string "<%Y-%m-%d %a>" start)
+      (concat (format-time-string "<%Y-%m-%d %a>" start)
+              "--" (format-time-string "<%Y-%m-%d %a>" end)))))
+
+(defun my/org-today-groups ()
+  "Group the daily agenda without discarding unmatched entries."
+  '((:name "Events" :todo nil :order 0)
+    (:name "Overdue deadlines" :deadline past :order 1)
+    (:name "Earlier plans" :scheduled past :order 2)
+    (:name "Work" :category "Work" :order 3)
+    (:name "Personal" :category "Personal" :order 4)))
+
+(defun my/org-task-groups ()
+  "Group all open tasks by profile and state."
+  '((:name "Work: Doing" :and (:category "Work" :todo "DOING") :order 0)
+    (:name "Work: To do" :and (:category "Work" :todo "TODO") :order 1)
+    (:name "Work: Waiting" :and (:category "Work" :todo "WAIT") :order 2)
+    (:name "Personal: Doing" :and (:category "Personal" :todo "DOING") :order 3)
+    (:name "Personal: To do" :and (:category "Personal" :todo "TODO") :order 4)
+    (:name "Personal: Waiting" :and (:category "Personal" :todo "WAIT") :order 5)))
+
+(declare-function nerd-icons-faicon "nerd-icons" (icon-name &rest args))
+(declare-function nerd-icons-faicon-family "nerd-icons" ())
+(defvar org-super-agenda-groups nil)
+(defvar-local my/org-agenda-style--face-cookies nil
+  "Buffer-local face adjustments owned by the agenda style.")
+;; Org preserves face-remapping-alist across mode resets during navigation.
+;; Our cleanup record must survive those resets for the same length of time.
+(put 'my/org-agenda-style--face-cookies 'permanent-local t)
+
+(defun my/org-agenda-column-gap (column)
+  "Return display-only spacing to COLUMN, measured in normal font cells."
+  ;; Absolute tab stops account for icon fonts and Org Modern's wider badges.
+  ;; Keep a real space so Org's state matching and editing still work normally.
+  (propertize " " 'display `(space :align-to ,column)
+              'my/org-agenda-column column))
+
+(defun my/org-agenda-heading-gap ()
+  "Place task states and event titles in their own fixed agenda columns."
+  (if (derived-mode-p 'org-agenda-mode)
+      "" ; current-time / grid rows already start at the details column
+    (my/org-agenda-column-gap
+     (if (and (derived-mode-p 'org-mode) (org-get-todo-state)) 46 56))))
+
+(defun my/org-agenda-category-icons ()
+  "Return Work/Personal icons only when their font can actually render."
+  (when (and (display-graphic-p) (require 'nerd-icons nil t)
+             (find-font (font-spec :family (nerd-icons-faicon-family))))
+    `(("\\`Work\\'" (,(nerd-icons-faicon "nf-fa-briefcase" :height 1.0 :v-adjust -0.05
+                                       :face 'font-lock-keyword-face)))
+      ("\\`Personal\\'" (,(nerd-icons-faicon "nf-fa-user" :height 1.0 :v-adjust -0.05
+                                           :face 'font-lock-string-face))))))
+
+(defun my/org-agenda-format-date (date)
+  "Display the full day and civil date for daily and weekly agenda views."
+  (format "%s, %d %s %d"
+          (calendar-day-name date) (nth 1 date)
+          (calendar-month-name (car date)) (nth 2 date)))
+
+(defface my/org-agenda-now-rule
+  '((t (:inherit org-agenda-current-time :strike-through t)))
+  "Horizontal rule around the agenda's readable current time."
+  :group 'org-agenda)
+
+(defun my/org-agenda-now-string ()
+  "Return a current-time label whose rule follows the visible window edge."
+  (concat "now " (propertize "─" 'display '(space :align-to (- right 1)))))
+
+(defun my/org-agenda-style-now-rule ()
+  "Draw the current-time rule through blank columns, leaving its text clear."
+  (save-excursion
+    (save-match-data
+      (with-silent-modifications
+        (goto-char (point-min))
+        (while (< (point) (point-max))
+          (let* ((beg (point)) (end (line-end-position))
+                 (heading (text-property-any beg end 'org-heading t)))
+            (when (and heading (not (org-get-at-bol 'org-hd-marker))
+                       (equal (buffer-substring-no-properties heading end) "now ─")
+                       (re-search-forward "[0-9][0-9]:[0-9][0-9]" heading t))
+              ;; Set, rather than append, our face: repeated styling stays stable.
+              (put-text-property beg (match-beginning 0) 'face 'my/org-agenda-now-rule)
+              (put-text-property (match-end 0) heading 'face 'my/org-agenda-now-rule)
+              (put-text-property (+ heading 4) end 'face 'my/org-agenda-now-rule))
+            (goto-char beg)
+            (forward-line 1)))))))
+
+(defun my/org-agenda-style-buffer ()
+  "Style the agenda without rewriting rows, source markers, or keymaps."
+  (when (derived-mode-p 'org-agenda-mode)
+    (require 'face-remap)
+    (setq-local line-spacing 0.18
+                left-margin-width 2
+                right-margin-width 2
+                display-line-numbers nil
+                show-trailing-whitespace nil)
+    ;; Org Modern copies the remap tree, invalidating identity-based cookies.
+    ;; Remove every equal copy of our own specs, leaving other remaps intact.
+    (dolist (cookie my/org-agenda-style--face-cookies)
+      (when-let* ((entry (assq (car cookie) face-remapping-alist)))
+        (setcdr entry (cl-remove (cdr cookie) (cdr entry) :test #'equal))))
+    (setq my/org-agenda-style--face-cookies
+          (mapcar (lambda (spec) (apply #'face-remap-add-relative spec))
+                   '((org-agenda-structure :height 1.10 :weight semibold :box nil)
+                    (org-agenda-date :height 1.0 :weight semibold :slant normal)
+                    (org-agenda-date-today :height 1.0 :weight semibold :slant normal)
+                    (org-agenda-date-weekend :height 1.0 :weight semibold :slant normal)
+                    (org-super-agenda-header :inherit font-lock-keyword-face
+                                            :weight semibold :box nil))))
+    (dolist (window (get-buffer-window-list (current-buffer) nil t))
+      (set-window-margins window left-margin-width right-margin-width))
+    (my/org-agenda-style-now-rule)))
+
+(defun my/org-configure-agenda-style ()
+  "Configure a quiet agenda layout while preserving states and warning text."
+  (setq org-agenda-category-icon-alist (my/org-agenda-category-icons)
+        org-agenda-prefix-format
+        '((agenda . " %i%(my/org-agenda-column-gap 4)%c%(my/org-agenda-column-gap 14)%-11t%(my/org-agenda-column-gap 27)%s%(my/org-agenda-heading-gap)")
+          (todo . " %i%(my/org-agenda-column-gap 4)%c%(my/org-agenda-heading-gap)")
+          (tags . " %i%(my/org-agenda-column-gap 4)%c%(my/org-agenda-heading-gap)")
+          (search . " %i%(my/org-agenda-column-gap 4)%c%(my/org-agenda-heading-gap)"))
+        ;; Org adds one normal space after this field, putting titles at 56.
+        org-agenda-todo-keyword-format (concat "%s" (my/org-agenda-column-gap 55))
+        org-agenda-timerange-leaders '("" "Day %d of %d: ")
+        org-agenda-deadline-leaders '("Due: " "Due in %d d: " "Due %d d. ago: ")
+        ;; The ordinary day/week view should be as readable as Today.
+        org-super-agenda-groups (my/org-today-groups)
+        org-agenda-format-date #'my/org-agenda-format-date
+        org-agenda-block-separator ""
+        org-agenda-time-leading-zero t
+        org-agenda-timegrid-use-ampm nil
+        ;; Keep the live current-time row, but drop the unused hourly grid lines.
+        org-agenda-time-grid '((daily today require-timed) () "" "")
+        org-agenda-current-time-string (my/org-agenda-now-string))
+  (add-hook 'org-agenda-mode-hook #'my/org-agenda-style-buffer)
+  (add-hook 'org-agenda-finalize-hook #'my/org-agenda-style-buffer t)
+  (advice-add #'org-agenda-schedule :after #'my/org-review-refresh-after-date-change)
+  (advice-add #'org-agenda-deadline :after #'my/org-review-refresh-after-date-change))
+
+(defun my/org-order-agenda-keywords (&rest _)
+  "Keep agenda state selectors in workflow order, preserving extra file states."
+  (let ((order '("TODO" "DOING" "WAIT" "DONE" "CANCELLED")))
+    (setq org-todo-keywords-for-agenda
+          (append (seq-filter (lambda (keyword)
+                                (member keyword org-todo-keywords-for-agenda))
+                              order)
+                  (seq-difference org-todo-keywords-for-agenda order)))))
+
+(defun my/org-review-skip-visible-task ()
+  "Skip this heading if its actual source already appears above in Review."
+  (let ((source (current-buffer)) (position (point)) shown)
+    (when (buffer-live-p org-agenda-buffer)
+      (with-current-buffer org-agenda-buffer
+        (save-restriction
+          (widen)
+          (save-excursion
+            (goto-char (point-min))
+            (while (and (not shown) (< (point) (point-max)))
+              (when-let* ((marker (org-get-at-bol 'org-hd-marker)))
+                (setq shown (and (eq source (marker-buffer marker))
+                                 (= position (marker-position marker)))))
+              (forward-line 1))))))
+    (when shown
+      ;; Skip only this heading, not an undated child task below it.
+      (save-excursion (outline-next-heading) (point)))))
+
+(defun my/org-review-refresh-after-date-change (&rest _)
+  "Move a dated task between Review sections immediately, without saving it."
+  (when (and (derived-mode-p 'org-agenda-mode)
+             (not org-agenda-bulk-marked-entries)
+             (save-restriction
+               (widen)
+               (text-property-any (point-min) (point-max) 'my/org-review t)))
+    (let* ((marker (org-get-at-bol 'org-hd-marker))
+           (source (and marker (marker-buffer marker)))
+           (position (and marker (marker-position marker))))
+      (org-agenda-redo t)
+      ;; Org replaces markers on redraw. Follow the same source, not its title.
+      (when source
+        (goto-char (point-min))
+        (catch 'found
+          (while (< (point) (point-max))
+            (when-let* ((new-marker (org-get-at-bol 'org-hd-marker)))
+              (when (and (eq source (marker-buffer new-marker))
+                         (= position (marker-position new-marker)))
+                (throw 'found t)))
+            (forward-line 1)))))))
+
+(defun my/org-review-blocks ()
+  "Return Today followed by open tasks not already represented there."
+  `((agenda "" ((org-agenda-overriding-header "Today")
+                 (org-super-agenda-groups ',(my/org-today-groups))))
+    (alltodo "" ((org-agenda-overriding-header
+                  ,(propertize "Other open tasks" 'my/org-review t))
+                 (org-agenda-skip-function #'my/org-review-skip-visible-task)
+                  (org-super-agenda-groups ',(my/org-task-groups))))))
+
+(defun my/org-configure-workflow ()
+  "Configure central capture files, task states, and explicit agenda views."
+  (let ((work (my/org-file "work.org"))
+        (personal (my/org-file "personal.org")))
+    (setq org-agenda-files (append (my/org-profile-files "work")
+                                   (my/org-profile-files "personal"))
+          org-default-notes-file personal
+          org-todo-keywords '((sequence "TODO(t)" "DOING(i)" "WAIT(w)"
+                                       "|" "DONE(d)" "CANCELLED(c)"))
+          org-todo-keyword-faces '(("DOING" . +org-todo-active)
+                                   ("WAIT" . +org-todo-onhold)
+                                   ("CANCELLED" . +org-todo-cancel))
+          org-use-fast-todo-selection t
+          org-log-done 'time
+          org-log-into-drawer t
+          org-agenda-span 1
+          org-agenda-start-day "0d"
+          org-agenda-start-on-weekday nil
+          org-agenda-window-setup 'current-window
+          org-agenda-skip-scheduled-if-done t
+          org-agenda-skip-deadline-if-done t
+          org-agenda-skip-timestamp-if-done t
+          org-agenda-todo-ignore-scheduled nil
+          org-agenda-todo-ignore-deadlines nil
+          org-agenda-todo-ignore-timestamp nil
+          org-deadline-warning-days 7
+          org-refile-targets `(((,work ,personal) :maxlevel . 2))
+          org-refile-use-outline-path 'file
+          org-outline-path-complete-in-steps nil
+          org-refile-allow-creating-parent-nodes 'confirm
+          org-capture-templates
+          `(("w" "Work")
+            ("wt" "Task" entry (file+headline ,work "Inbox")
+             "* TODO %?\n" :empty-lines 1)
+            ("wn" "Note" entry (file+headline ,work "Notes")
+             "* %?\n%U\n\n%i\n" :empty-lines 1)
+            ("we" "Timed event (local only)" entry (file ,(my/org-file "calendar-work.org"))
+              "* %?\n:org-gcal:\n%(my/org-capture-timed-range)\n:END:\n" :empty-lines 1)
+            ("wa" "All-day event (local only)" entry (file ,(my/org-file "calendar-work.org"))
+             "* %?\n:org-gcal:\n%(my/org-capture-all-day-range)\n:END:\n" :empty-lines 1)
+            ("p" "Personal")
+            ("pt" "Task" entry (file+headline ,personal "Inbox")
+             "* TODO %?\n" :empty-lines 1)
+            ("pn" "Note" entry (file+headline ,personal "Notes")
+             "* %?\n%U\n\n%i\n" :empty-lines 1)
+            ("pe" "Timed event (auto-sync)" entry
+             (file ,(my/org-file "calendar-personal.org"))
+              "* %?\n:org-gcal:\n%(my/org-capture-timed-range)\n:END:\n" :empty-lines 1)
+            ("pa" "All-day event (auto-sync)" entry
+             (file ,(my/org-file "calendar-personal.org"))
+             "* %?\n:org-gcal:\n%(my/org-capture-all-day-range)\n:END:\n" :empty-lines 1))
+          org-agenda-custom-commands
+          `(("d" "Today" agenda ""
+             ((org-agenda-overriding-header "Today")
+              (org-super-agenda-groups ',(my/org-today-groups))))
+             ("r" "Review: today and other tasks" ,(my/org-review-blocks))
+            ("w" "Work review" ,(my/org-review-blocks)
+             ((org-agenda-files ',(my/org-profile-files "work"))))
+            ("p" "Personal review" ,(my/org-review-blocks)
+             ((org-agenda-files ',(my/org-profile-files "personal"))))
+            ("l" "Old tasks: review and refile" alltodo ""
+             ((org-agenda-files ',(mapcar #'my/org-file
+                                         '("notes.org" "career.org" "work/brl-cash-returns.org")))
+              (org-super-agenda-groups nil)
+               (org-agenda-overriding-header "Old tasks: refile relevant entries into Work or Personal")))))
+    (my/org-configure-agenda-style)))
+
+(defun my/org-today ()
+  "Open the focused daily agenda."
+  (interactive)
+  (require 'org-agenda)
+  (org-agenda nil "d"))
+
+(defun my/org-review ()
+  "Open Today and other open tasks, without repeating today's task rows."
+  (interactive)
+  (require 'org-agenda)
+  (org-agenda nil "r"))
+
+(defun my/org-capture-work-task ()
+  "Capture a task directly into the Work inbox."
+  (interactive)
+  (org-capture nil "wt"))
+
+(defun my/org-capture-personal-task ()
+  "Capture a task directly into the Personal inbox."
+  (interactive)
+  (org-capture nil "pt"))
+;; END org-workflow
+
+(after! org (my/org-configure-workflow))
+
+(after! org-agenda
+  ;; Org collects per-file keywords with `push', reversing the selector menu.
+  (advice-add #'org-agenda-prepare :after #'my/org-order-agenda-keywords)
+  (map! :map org-agenda-mode-map
+        :localleader
+        :desc "Edit event" "e" #'my/org-calendar-repeat-edit))
+
+(use-package! org-super-agenda
+  :after org-agenda
+  :config
+  ;; Header keymaps must not replace Doom/Evil's navigation on group titles.
+   (setq org-super-agenda-header-map (make-sparse-keymap)
+         org-super-agenda-show-message nil
+         org-super-agenda-keep-order t)
+   ;; Keep the default groups installed by `my/org-configure-workflow'.
+   ;; Deferred loading must not leave normal day/week agendas ungrouped.
+   (org-super-agenda-mode 1))
+
+(map! :leader
+      :desc "Today" "n d" #'my/org-today
+      :desc "Review all tasks" "n r" #'my/org-review
+      :desc "Capture Work task" "n w" #'my/org-capture-work-task
+      :desc "Capture Personal task" "n p" #'my/org-capture-personal-task)
+#+end_src
+
+** Personal calendar test
+
+Only the personal test calendar syncs automatically. Finishing event capture
+or saving edits queues them; =CANCELLED= queues remote cancellation. Google is
+checked every five minutes and when opening the agenda. Conflicts preserve
+both versions for explicit review. Work stays local. Optional macOS Keychain
+storage unlocks tokens automatically after restarts; without it, unlock once
+per Emacs session. Background refresh never opens a browser or prompts.
+Recurring series use one stored heading plus a private dated-occurrence cache.
+Agenda =, e= chooses occurrence/series edit scope; whole-series writes need approval.
+
+#+begin_src emacs-lisp
+;; BEGIN org-calendar
+(defvar my/org-gcal-test-calendar-id nil
+  "ID of the personal secondary calendar used for sync testing.")
+
+(defvar my/org-calendar-settings-file
+  (expand-file-name "~/.config/doom-private/org-calendar.el")
+  "Untracked settings for the personal Google Calendar test.")
+
+(defun my/org-calendar-open-auth-url (url &rest _)
+  "Open authorization URL in Zen, with a clipboard fallback."
+  (kill-new url)
+  (when (display-graphic-p)
+    (gui-set-selection 'CLIPBOARD url))
+  (with-current-buffer (get-buffer-create "*Personal Calendar Authorization*")
+    (let ((inhibit-read-only t))
+      (erase-buffer)
+      (insert "Open this link in Zen with your personal Google account.\n"
+              "It is also copied to your clipboard. Keep Emacs running until authorization completes.\n\n"
+              url "\n"))
+    (special-mode))
+  (display-buffer "*Personal Calendar Authorization*")
+  (if (file-directory-p "/Applications/Zen.app")
+      (start-process "org-calendar-zen" nil "open" "-a" "/Applications/Zen.app" url)
+    (message "Open Zen and paste the calendar authorization link from your clipboard")))
+
+(defvar my/org-calendar-login-process nil
+  "Separate process handling personal calendar login.")
+(defvar my/org-calendar-access-token nil
+  "Personal calendar access token, held only in memory.")
+(defvar my/org-calendar-token-expiration nil
+  "Expiration of the current calendar access token, as Unix seconds.")
+(defvar my/org-calendar-token-passphrase nil
+  "Token-store passphrase held only in memory until Emacs exits.")
+(defvar my/org-calendar-keychain-enabled nil
+  "Non-nil after opting in to macOS Keychain automatic unlock.")
+(defvar my/org-calendar-keychain-helper-file nil
+  "Native helper used only for the calendar token-store Keychain item.")
+(defvar my/org-calendar-auth-finished-hook nil
+  "Functions called with SUCCESS and BACKGROUND after authorization completes.")
+(defvar my/org-calendar-auth-problem nil
+  "Last safe authorization error category: temporary, authorization, or unlock.")
+(defvar my/org-calendar-auth-retry-after 0
+  "Earliest Unix time for retrying a failed background refresh.")
+
+(defun my/org-calendar-show-login-status (text &optional reset)
+  "Keep login status TEXT visible; clear older status when RESET is non-nil."
+  (with-current-buffer (get-buffer-create "*Personal Calendar Authorization*")
+    (let ((inhibit-read-only t))
+      (when reset (erase-buffer))
+      (goto-char (point-max))
+      (insert text "\n"))
+    (special-mode))
+  (display-buffer "*Personal Calendar Authorization*"))
+(defvar my/org-calendar-auth-worker-file
+  (expand-file-name "lisp/org-calendar-auth.el"
+                    (file-name-directory
+                     (file-truename
+                      (expand-file-name "config.org"
+                                        (or (bound-and-true-p doom-user-dir) user-emacs-directory)))))
+  "Batch worker for calendar authorization.")
+
+(defun my/org-calendar-session-ready-p ()
+  "Return non-nil when this session has a token with a minute to spare."
+  (and (stringp my/org-calendar-access-token)
+       (not (string-empty-p my/org-calendar-access-token))
+       (numberp my/org-calendar-token-expiration)
+        (> my/org-calendar-token-expiration (+ (float-time) 60))))
+
+(defun my/org-calendar-unlock-available-p ()
+  "Return non-nil if memory or the opted-in Keychain can supply the unlock."
+  (or my/org-calendar-token-passphrase
+      (and my/org-calendar-keychain-enabled my/org-calendar-keychain-helper-file
+           (file-executable-p my/org-calendar-keychain-helper-file))))
+
+(defun my/org-calendar-access-token (original calendar-id)
+  "Never wait for browser login in the editor for the test CALENDAR-ID."
+  (if (equal calendar-id my/org-gcal-test-calendar-id)
+      (if (my/org-calendar-session-ready-p)
+          my/org-calendar-access-token
+        (user-error "Calendar login required: SPC n g l; Emacs stays usable during login"))
+    (funcall original calendar-id)))
+
+(defun my/org-calendar-refresh-token (original calendar-id)
+  "Fail without blocking when the test calendar rejects its token."
+  (if (equal calendar-id my/org-gcal-test-calendar-id)
+      (progn
+        (setq my/org-calendar-access-token nil my/org-calendar-token-expiration nil)
+        (deferred:fail "Calendar authorization rejected; run SPC n g l, then retry"))
+    (funcall original calendar-id)))
+
+(defun my/org-calendar-login-filter (process output)
+  "Handle worker OUTPUT without putting tokens in a visible buffer."
+  (let ((pending (concat (or (process-get process 'pending) "") output)))
+    (while (string-match "\n" pending)
+      (let ((line (substring pending 0 (match-beginning 0))))
+        (setq pending (substring pending (match-end 0)))
+        (cond
+          ((string-prefix-p "ORG-CALENDAR URL " line)
+           (if (process-get process 'background)
+               (my/org-calendar-stop-login process)
+             (my/org-calendar-open-auth-url
+              (json-parse-string (substring line (length "ORG-CALENDAR URL "))))))
+         ((string-prefix-p "ORG-CALENDAR TOKEN " line)
+          (let ((data (json-parse-string (substring line (length "ORG-CALENDAR TOKEN "))
+                                       :object-type 'plist)))
+            (setq my/org-calendar-access-token (plist-get data :token)
+                  my/org-calendar-token-expiration (plist-get data :expiration))
+            (process-put process 'authenticated (my/org-calendar-session-ready-p))))
+         ((string-prefix-p "ORG-CALENDAR ERROR " line)
+           (process-put process 'login-error t)
+           (process-put process 'failure-kind
+                        (pcase (substring line (length "ORG-CALENDAR ERROR "))
+                           ("authorization" 'authorization)
+                           ("unlock" 'unlock)
+                           ("keychain" 'keychain)
+                          (_ 'temporary)))))))
+    (process-put process 'pending pending)))
+
+(defun my/org-calendar-login-sentinel (process _event)
+  "Clean up a finished login PROCESS and report its outcome."
+  (when (memq (process-status process) '(exit signal closed failed))
+    (when-let* ((timer (process-get process 'timeout-timer)))
+      (cancel-timer timer))
+    (when (eq process my/org-calendar-login-process)
+      (setq my/org-calendar-login-process nil)
+       (let ((success (and (= (process-exit-status process) 0)
+                           (process-get process 'authenticated)
+                           (not (process-get process 'stopped)))))
+         (setq my/org-calendar-auth-problem
+               (unless success
+                 (if (and (process-get process 'stopped) (not (process-get process 'background)))
+                     'authorization
+                   (or (process-get process 'failure-kind) 'temporary)))
+               my/org-calendar-auth-retry-after
+                (if (memq my/org-calendar-auth-problem '(temporary keychain)) (+ (float-time) 60) 0))
+        (unless success
+          (setq my/org-calendar-access-token nil my/org-calendar-token-expiration nil))
+        (let ((status
+               (cond (success (if (bound-and-true-p my/org-calendar-auto-mode)
+                                 "Calendar login ready. Automatic sync will continue."
+                               "Calendar login ready. Run SPC n g m s to fetch."))
+                     ((process-get process 'stopped) "Calendar login stopped; no editor sync was started.")
+                      ((eq my/org-calendar-auth-problem 'temporary)
+                       "Calendar connection interrupted. The session stays unlocked; automatic sync will retry.")
+                       ((eq my/org-calendar-auth-problem 'unlock)
+                        "Calendar token store could not be unlocked. Retry the passphrase with SPC n g l.")
+                       ((eq my/org-calendar-auth-problem 'keychain)
+                        "macOS Keychain is unavailable. Unlock it or update calendar storage with SPC n g k.")
+                      (t "Google authorization is required. Run SPC n g l; your local unlock is retained."))))
+          (unless (process-get process 'background)
+            (my/org-calendar-show-login-status status)
+            (message "%s" status))
+           ;; Offline errors and expired Google authorization don't invalidate
+           ;; the local decryption passphrase. Only a failed unlock does.
+           (when (eq my/org-calendar-auth-problem 'unlock)
+            (when my/org-calendar-token-passphrase (clear-string my/org-calendar-token-passphrase))
+            (setq my/org-calendar-token-passphrase nil))
+          (run-hook-with-args 'my/org-calendar-auth-finished-hook
+                              success (process-get process 'background)))))))
+
+(defun my/org-calendar-stop-login (&optional process)
+  "Stop the login PROCESS, or the current login, without interrupting Emacs."
+  (interactive)
+  (let ((process (or process my/org-calendar-login-process)))
+    (if (and process (process-live-p process))
+        (progn
+          (process-put process 'stopped t)
+          (delete-process process)
+          (my/org-calendar-login-sentinel process "stopped"))
+      (message "No calendar login is running"))))
+
+(defun my/org-calendar--launch-login (passphrase &optional background)
+  "Start a separate authorization process using PASSPHRASE; refresh quietly if BACKGROUND."
+  (setq my/org-calendar-login-process
+        (make-process
+         :name "org-calendar-login" :buffer nil :noquery t :connection-type 'pipe
+         :command (append
+                    (list (expand-file-name invocation-name invocation-directory)
+                         "-Q" "--batch" "--eval" (prin1-to-string `(setq load-path ',load-path))
+                         "-l" my/org-calendar-auth-worker-file
+                         "--" my/org-calendar-settings-file oauth2-auto-plstore)
+                    (when (or background (null passphrase))
+                      (list (if background "refresh-only" "login")))
+                    (when (null passphrase)
+                      (list "keychain" my/org-calendar-keychain-helper-file)))
+         :filter #'my/org-calendar-login-filter :sentinel #'my/org-calendar-login-sentinel))
+  (set-process-buffer my/org-calendar-login-process nil)
+  (process-put my/org-calendar-login-process 'background background)
+  (when (and background (fboundp 'my/org-calendar-auto--status))
+    (my/org-calendar-auto--status "pending"))
+  ;; Send the passphrase over stdin, never through args, files, or logs.
+   (when passphrase (process-send-string my/org-calendar-login-process (concat passphrase "\n")))
+  (process-put my/org-calendar-login-process 'timeout-timer
+               (run-at-time (if background 30 180) nil #'my/org-calendar-stop-login my/org-calendar-login-process)))
+
+(defun my/org-calendar-background-refresh ()
+  "Refresh using the unlocked session, without any browser or minibuffer prompts."
+   (when (and (my/org-calendar-unlock-available-p)
+             (not (memq my/org-calendar-auth-problem '(authorization unlock)))
+             (>= (float-time) my/org-calendar-auth-retry-after)
+             (not (and my/org-calendar-login-process (process-live-p my/org-calendar-login-process))))
+    (condition-case nil
+        (my/org-calendar--launch-login my/org-calendar-token-passphrase t)
+      (error
+       (setq my/org-calendar-auth-problem 'temporary
+             my/org-calendar-auth-retry-after (+ (float-time) 60))
+       (when (fboundp 'my/org-calendar-auto--status)
+         (my/org-calendar-auto--status "pending"))))))
+
+(defun my/org-calendar-login ()
+  "Unlock once per session and authorize without blocking the editor."
+  (interactive)
+  (my/org-calendar-prepare)
+  (when (and my/org-calendar-login-process (process-live-p my/org-calendar-login-process))
+    (user-error "Calendar login is already running; SPC n g m c cancels it"))
+  (unless (file-readable-p my/org-calendar-auth-worker-file)
+    (user-error "Missing calendar login worker: %s" my/org-calendar-auth-worker-file))
+  (let ((passphrase (cond
+                    (my/org-calendar-token-passphrase (copy-sequence my/org-calendar-token-passphrase))
+                    ((and (my/org-calendar-unlock-available-p)
+                          (not (eq my/org-calendar-auth-problem 'unlock))) nil)
+                    (t (read-passwd "Unlock local calendar tokens, not Google password (choose one first time): ")))))
+    (unwind-protect
+        (progn
+          (when (and passphrase (string-empty-p passphrase))
+            (user-error "Choose a non-empty token-store passphrase"))
+          (setq my/org-calendar-access-token nil my/org-calendar-token-expiration nil
+                my/org-calendar-auth-problem nil my/org-calendar-auth-retry-after 0
+                my/org-calendar-token-passphrase (when passphrase (copy-sequence passphrase)))
+          (my/org-calendar-show-login-status
+           "Starting calendar login. Emacs stays usable; SPC n g m c cancels.\nZen will open when the authorization link arrives." t)
+          (my/org-calendar--launch-login passphrase)
+          (message "Calendar login running separately. Continue editing; SPC n g m c cancels."))
+      (when passphrase (clear-string passphrase)))))
+
+(defun my/org-calendar-disable-package-auto-post ()
+  "Keep org-gcal's implicit publishing separate from the controlled sync queue."
+  (remove-hook 'org-capture-after-finalize-hook #'org-gcal--capture-post)
+  (remove-hook 'org-after-refile-insert-hook #'org-gcal--refile-post)
+  ;; The package also installs hooks lazily when Org libraries load later.
+  ;; Guard their functions as well, leaving explicit manual commands available.
+  (advice-add #'org-gcal--capture-post :override #'ignore)
+  (advice-add #'org-gcal--refile-post :override #'ignore))
+
+(defun my/org-calendar-prepare ()
+  "Load local credentials and configure only the personal test calendar."
+  (unless (file-readable-p my/org-calendar-settings-file)
+    (user-error "Configure %s first; see org-agenda.org" my/org-calendar-settings-file))
+  (load my/org-calendar-settings-file nil t)
+  (unless (and (stringp my/org-gcal-test-calendar-id)
+               (string-suffix-p "@group.calendar.google.com" my/org-gcal-test-calendar-id)
+               (stringp (bound-and-true-p org-gcal-client-id))
+               (not (string-empty-p org-gcal-client-id))
+               (stringp (bound-and-true-p org-gcal-client-secret))
+               (not (string-empty-p org-gcal-client-secret)))
+    (user-error "Set OAuth credentials and a secondary personal test calendar ID first"))
+  ;; Keep encrypted authorization tokens outside both tracked repositories.
+  (setq oauth2-auto-plstore
+        (expand-file-name "org-calendar-tokens.plist"
+                          (file-name-directory my/org-calendar-settings-file)))
+  (require 'org-gcal)
+  (my/org-calendar-disable-package-auto-post)
+  (advice-remove #'oauth2-auto--browser-request-auto 'my/org-calendar-auth-browser)
+  (advice-add #'org-gcal--get-access-token :around #'my/org-calendar-access-token)
+  (advice-add #'org-gcal--refresh-token :around #'my/org-calendar-refresh-token)
+  (setq org-gcal-fetch-file-alist
+        (list (cons my/org-gcal-test-calendar-id (my/org-file "calendar-personal.org")))
+        org-gcal-auto-archive nil
+        org-gcal-remove-api-cancelled-events nil
+        org-gcal-remove-events-with-cancelled-todo nil
+        org-gcal-cancelled-todo-keyword "CANCELLED"
+        org-gcal-managed-newly-fetched-mode "gcal"
+        org-gcal-managed-update-existing-mode "gcal"
+        org-gcal-managed-post-at-point-update-existing 'prompt
+        org-gcal-up-days 7
+        org-gcal-down-days 30))
+
+(defun my/org-calendar-check-event ()
+  "Reject tasks, other files, and events linked to another calendar."
+  (unless (and (derived-mode-p 'org-mode)
+               (buffer-file-name)
+               (file-equal-p (buffer-file-name) (my/org-file "calendar-personal.org")))
+    (user-error "Only events in calendar-personal.org can use the test calendar"))
+  (org-back-to-heading t)
+  (when (org-get-todo-state)
+    (user-error "Tasks and completed or cancelled events cannot be published"))
+  (let ((calendar-id (org-entry-get (point) "calendar-id")))
+    (when (and calendar-id (not (equal calendar-id my/org-gcal-test-calendar-id)))
+      (user-error "This event belongs to a different calendar"))))
+
+(defun my/org-calendar-event-marker ()
+  "Return the source heading marker from an Org file or agenda entry."
+  (cond ((derived-mode-p 'org-agenda-mode)
+         (or (org-get-at-bol 'org-hd-marker)
+             (user-error "Move to an event entry first")))
+        ((derived-mode-p 'org-mode) (point-marker))
+        (t (user-error "Open an Org event or select one in the agenda"))))
+
+(defun my/org-calendar-fetch ()
+  "Fetch personal test events without publishing local changes."
+  (interactive)
+  (my/org-calendar-prepare)
+  (unless (my/org-calendar-session-ready-p)
+    (user-error "Log in first with SPC n g l, then fetch; SPC n g m c cancels login"))
+  (when (yes-or-no-p "Fetch test calendar? Publish local event edits first; Google fields may replace them. ")
+    (org-gcal-fetch)
+    (message "Calendar fetch started; check notifications and refresh agenda with gr")))
+
+(defun my/org-calendar-publish ()
+  "Publish the selected personal event after confirming the test calendar."
+  (interactive)
+  (my/org-calendar-prepare)
+  (unless (my/org-calendar-session-ready-p)
+    (user-error "Log in first with SPC n g l, then publish"))
+  (org-with-point-at (my/org-calendar-event-marker)
+    (my/org-calendar-check-event)
+    (when (yes-or-no-p
+           (format "Publish %s to personal test calendar %s? "
+                   (org-get-heading t t t t) my/org-gcal-test-calendar-id))
+      (org-entry-put (point) "calendar-id" my/org-gcal-test-calendar-id)
+      (save-buffer)
+      (org-gcal-post-at-point)
+      (message "Publish requested; check org-gcal notifications and Google Calendar"))))
+
+(defun my/org-calendar-cancel ()
+  "Cancel a linked personal test event remotely, keeping its local heading."
+  (interactive)
+  (my/org-calendar-prepare)
+  (unless (my/org-calendar-session-ready-p)
+    (user-error "Log in first with SPC n g l, then cancel the event"))
+  (org-with-point-at (my/org-calendar-event-marker)
+    (my/org-calendar-check-event)
+    (unless (and (equal (org-entry-get (point) "calendar-id") my/org-gcal-test-calendar-id)
+                 (or (org-entry-get (point) "entry-id") (org-entry-get (point) "ID")))
+      (user-error "Publish or fetch this event before cancelling it"))
+    (when (yes-or-no-p (format "Cancel %s on the personal test calendar? "
+                              (org-get-heading t t t t)))
+      (org-gcal-delete-at-point)
+      (message "Cancellation requested; check notifications before refreshing the agenda"))))
+;; END org-calendar
+
+(use-package! org-gcal
+  :commands (org-gcal-fetch org-gcal-post-at-point org-gcal-delete-at-point))
+
+(map! :leader
+      (:prefix ("n g" . "Calendar")
+       :desc "Login" "l" #'my/org-calendar-login
+       :desc "Status" "s" #'my/org-calendar-auto-review
+       :desc "Keychain setup" "k" #'my/org-calendar-keychain-enable
+       (:prefix ("m" . "More")
+        :desc "Sync now" "s" #'my/org-calendar-fetch
+        :desc "Cancel login" "c" #'my/org-calendar-stop-login
+        :desc "Pause/resume" "p" #'my/org-calendar-auto-mode)))
+
+(after! org
+  (load (expand-file-name "org-calendar-keychain.el" (file-name-directory my/org-calendar-auth-worker-file)) nil t)
+  (load (expand-file-name "org-calendar-auto.el" (file-name-directory my/org-calendar-auth-worker-file)) nil t)
+  (when (file-readable-p my/org-calendar-settings-file)
+    (condition-case nil (my/org-calendar-auto-mode 1)
+      (user-error (setq my/org-calendar-auto-mode nil)
+                  (message "Personal calendar automation awaits local setup")))))
+
+#+end_src
+
 ** Showing images in the document
 
 Org 9.8 renamed inline images to link previews, and
@@ -859,6 +1661,18 @@ switches between the two. Every glyph in both sets comes from Maple Mono.
 (map! :leader :desc "Org heading bullets" "t B" #'my/org-modern-toggle-stars)
 
 (add-hook 'org-mode-hook #'hl-todo-mode)
+
+(after! org-modern
+  ;; Maple Mono needs full-sized labels instead of org-modern's 80% default.
+  (setq org-modern-label-border 1)
+  (custom-set-faces!
+   '(org-modern-label :height 1.0 :width normal :weight medium)))
+
+(use-package! olivetti
+  :commands olivetti-mode
+  :init
+  (setq olivetti-body-width 100)
+  (map! :leader :desc "Centered writing" "t O" #'olivetti-mode))
 #+end_src
 
 * Keybindings

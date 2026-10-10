@@ -10,6 +10,10 @@
 ;; org-appear and org-modern come from the `(org +pretty)' flag, which also
 ;; enables them. Declaring them here left org-modern installed but never turned
 ;; on, and unpinned.
+(package! org-super-agenda)
+(package! org-gcal
+  :recipe (:host github :repo "kidd/org-gcal.el"))
+(package! olivetti)
 (package! treemacs-all-the-icons)
 (package! posframe)
 
