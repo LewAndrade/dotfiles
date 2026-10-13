@@ -9,10 +9,13 @@
 (require 'request)
 (require 'iso8601)
 (require 'parse-time)
+(load (expand-file-name "org-calendar-config.el"
+                        (file-name-directory (or load-file-name buffer-file-name))) nil t)
 
 (declare-function org-gcal--event-id-from-entry-id "org-gcal" (entry-id))
 (declare-function org-gcal--format-entry-id "org-gcal" (calendar-id event-id))
 (declare-function parse-iso8601-time-string "parse-time" (date))
+(declare-function my/org-calendar-status-install "org-calendar-status" ())
 
 (defgroup my/org-calendar-auto nil
   "Automatic personal calendar synchronization."
@@ -57,9 +60,9 @@
   (my/org-calendar-auto--same-file-p buffer-file-name))
 
 (defun my/org-calendar-auto--buffer ()
-  "Return the personal calendar buffer, checking the pinned test mapping."
-  (unless (and (equal my/org-calendar-auto--calendar my/org-gcal-test-calendar-id)
-               (string-suffix-p "@group.calendar.google.com" my/org-calendar-auto--calendar))
+  "Return the personal calendar buffer, checking its exact approved mapping."
+  (unless (and (equal my/org-calendar-auto--calendar my/org-calendar-id)
+               (my/org-calendar-configured-id-p my/org-calendar-auto--calendar))
     (user-error "Calendar mapping changed; disable automation and review it first"))
   (find-file-noselect my/org-calendar-auto--file))
 
@@ -346,6 +349,12 @@
 
 (defun my/org-calendar-auto--failure (status)
   "End a failed cycle without losing queued local changes."
+  ;; Network failures have no JSON error message. Keep a visible reason for a
+  ;; failed retry, rather than making it indistinguishable from routine polling.
+  (unless my/org-calendar-auto--last-error
+    (setq my/org-calendar-auto--last-error
+          (if status (format "Calendar request failed (HTTP %s); sync will retry automatically." status)
+            "Calendar could not be reached; sync will retry automatically.")))
   (when (eq status 401)
     (setq my/org-calendar-access-token nil my/org-calendar-token-expiration nil))
   (my/org-calendar-auto--finish (if (memq status '(400 403)) "needs attention" "pending"))
@@ -866,7 +875,7 @@ SCOPE explains whether choices affect one event, one occurrence, or a series."
 (defun my/org-calendar-auto--manual-publish (original &rest args)
   (if (not my/org-calendar-auto-mode) (apply original args)
     (org-with-point-at (my/org-calendar-event-marker)
-      (unless (my/org-calendar-auto--file-p) (user-error "Only personal test events sync automatically"))
+      (unless (my/org-calendar-auto--file-p) (user-error "Only personal events sync automatically"))
       (my/org-calendar-auto--local-payload)
       (save-buffer))
     (my/org-calendar-auto--schedule)))
@@ -876,7 +885,7 @@ SCOPE explains whether choices affect one event, one occurrence, or a series."
     (if (my/org-calendar-repeat--selected)
         (my/org-calendar-repeat--todo #'ignore)
     (org-with-point-at (my/org-calendar-event-marker)
-      (unless (my/org-calendar-auto--file-p) (user-error "Only personal test events sync automatically"))
+      (unless (my/org-calendar-auto--file-p) (user-error "Only personal events sync automatically"))
       (my/org-calendar-auto--local-payload)
       (org-todo "CANCELLED")
       (save-buffer))
@@ -894,7 +903,7 @@ SCOPE explains whether choices affect one event, one occurrence, or a series."
   (if my/org-calendar-auto-mode
       (progn
         (my/org-calendar-prepare)
-        (setq my/org-calendar-auto--calendar my/org-gcal-test-calendar-id
+        (setq my/org-calendar-auto--calendar my/org-calendar-id
               my/org-calendar-auto--file (my/org-file "calendar-personal.org"))
         (add-hook 'after-save-hook #'my/org-calendar-auto--after-save)
         (add-hook 'org-capture-after-finalize-hook #'my/org-calendar-auto--schedule)
@@ -906,8 +915,7 @@ SCOPE explains whether choices affect one event, one occurrence, or a series."
         (advice-add 'my/org-calendar-fetch :around #'my/org-calendar-auto--manual-fetch)
         (advice-add 'my/org-calendar-publish :around #'my/org-calendar-auto--manual-publish)
         (advice-add 'my/org-calendar-cancel :around #'my/org-calendar-auto--manual-cancel)
-        (add-to-list 'global-mode-string '(:eval (when my/org-calendar-auto-mode
-                                                (concat " Cal: " my/org-calendar-auto-status))))
+        (my/org-calendar-status-install)
         (setq my/org-calendar-auto--timer (run-at-time 300 300 #'my/org-calendar-auto--start))
         (my/org-calendar-auto--schedule))
     (dolist (timer (list my/org-calendar-auto--timer my/org-calendar-auto--debounce))
@@ -927,4 +935,5 @@ SCOPE explains whether choices affect one event, one occurrence, or a series."
     (my/org-calendar-auto--status "paused")))
 
 (provide 'org-calendar-auto)
+(load (expand-file-name "org-calendar-status.el" (file-name-directory (or load-file-name buffer-file-name))) nil t)
 (load (expand-file-name "org-calendar-repeat.el" (file-name-directory (or load-file-name buffer-file-name))) nil t)

@@ -1,5 +1,5 @@
 #!/bin/sh
-# Commit and push ~/Documents/org. Run every half hour by com.lew.org-backup,
+# Commit and push ~/Documents/org. Run every half hour from Emacs,
 # and safe to run by hand. Logs to ~/Library/Logs/org-backup.log.
 set -eu
 
@@ -16,6 +16,21 @@ exec 2>>"$LOG"
 log() { printf '%s  %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$*" | tee -a "$LOG"; }
 
 cd "$REPO" || { log "ERROR no repository at $REPO"; exit 1; }
+
+# Serialize every caller, including other Emacs instances and manual runs.
+# mkdir is atomic on macOS; unlike git's index lock this covers the whole run.
+LOCK="$(git rev-parse --git-path org-backup.lock)"
+if ! mkdir "$LOCK" 2>/dev/null; then
+  if [ -d "$LOCK" ]; then
+    log "SKIP backup lock exists: $LOCK"
+    exit 0
+  fi
+  log "ERROR could not create backup lock: $LOCK"
+  exit 1
+fi
+trap 'rm -f "$LOCK/pid"; rmdir "$LOCK" 2>/dev/null || true' EXIT
+trap 'exit 1' HUP INT TERM
+printf '%s\n' "$$" > "$LOCK/pid"
 
 if [ -n "$(git status --porcelain)" ]; then
   git add -A

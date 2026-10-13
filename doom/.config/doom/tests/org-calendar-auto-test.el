@@ -77,6 +77,43 @@
     (org-back-to-heading t)
     (let ((marker (point-marker))) (save-buffer) marker)))
 
+(ert-deftest my/calendar-auto-primary-approval-still-pins-the-calendar-and-file ()
+  (my/calendar-test-workspace
+    (let* ((my/org-calendar-id "personal@example.com")
+           (my/org-calendar-approved-primary-id my/org-calendar-id)
+           (my/org-calendar-auto--calendar my/org-calendar-id))
+      (should (buffer-live-p (my/org-calendar-auto--buffer)))
+      (with-current-buffer (find-file-noselect (my/org-file "calendar-work.org"))
+        (should-not (my/org-calendar-auto--file-p)))
+      (let ((my/org-calendar-auto--calendar "other@example.com"))
+        (should-error (my/org-calendar-auto--buffer) :type 'user-error))
+      (let ((my/org-calendar-approved-primary-id nil))
+        (should-error (my/org-calendar-auto--buffer) :type 'user-error)))))
+
+(ert-deftest my/calendar-auto-primary-switch-does-not-reuse-test-identities-or-occurrence-jobs ()
+  (my/calendar-test-workspace
+    (my/org-calendar-repeat--ensure-state)
+    (setq my/org-calendar-repeat--events '((:id "test-occurrence"))
+          my/org-calendar-repeat--pending '((:id "test-job")))
+    (my/org-calendar-repeat--save-state)
+    (let* ((old-cache (my/org-calendar-repeat--cache-file))
+           (my/org-calendar-id "personal@example.com")
+           (my/org-calendar-approved-primary-id my/org-calendar-id)
+           (my/org-calendar-auto--calendar my/org-calendar-id))
+      (my/org-calendar-repeat--ensure-state)
+      (should-not (equal old-cache (my/org-calendar-repeat--cache-file)))
+      (should-not my/org-calendar-repeat--events)
+      (should-not my/org-calendar-repeat--pending)
+      (let ((marker (my/calendar-test-heading "Stale test event")))
+        (org-with-point-at marker
+          (org-entry-put nil "calendar-id" "test@group.calendar.google.com")
+          (org-entry-put nil "GCAL_AUTO_ID" "old-test-event")
+          (save-buffer))
+        (my/org-calendar-auto--start)
+        (should-not (seq-some (lambda (call) (member (car call) '("POST" "PATCH" "DELETE")))
+                              my/calendar-test-calls))
+        (should (equal my/org-calendar-auto-status "needs attention"))))))
+
 (ert-deftest my/calendar-auto-create-is-idempotent-after-lost-reply ()
   (my/calendar-test-workspace
     (let ((marker (my/calendar-test-heading "Create automatically")))

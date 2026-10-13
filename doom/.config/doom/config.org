@@ -715,6 +715,10 @@ The cheatsheet is =~/Documents/org/org-agenda.org=.
 Agenda styling borrows the category icons and quiet layout from
 [[https://github.com/psamim/dotfiles/blob/master/doom/config.el][psamim's configuration]], but keeps full task states, overdue warnings, and
 the sync status. Nerd Icons are display-only; terminal agendas keep text labels.
+Today uses plain, theme-matched headings and tighter title columns. Time and
+date warnings share one field without dropping either. On wide graphical
+windows Today is centered; =, v= toggles centering. Review keeps its full-width,
+profile-labelled layout. Redraws preserve source actions and removable zoom.
 
 #+begin_src emacs-lisp
 ;; BEGIN org-workflow
@@ -838,6 +842,75 @@ the sync status. Nerd Icons are display-only; terminal agendas keep text labels.
 ;; Org preserves face-remapping-alist across mode resets during navigation.
 ;; Our cleanup record must survive those resets for the same length of time.
 (put 'my/org-agenda-style--face-cookies 'permanent-local t)
+(defvar-local my/org-agenda-style--zoom-cookie nil
+  "The user's text-scale adjustment, retained across Org agenda mode resets.")
+(put 'my/org-agenda-style--zoom-cookie 'permanent-local t)
+
+(defun my/org-agenda-style-zoom-cookie ()
+  "Keep Org's preserved zoom removable after mode resets and remap copies."
+  (when (derived-mode-p 'org-agenda-mode)
+    (if (bound-and-true-p text-scale-mode)
+        (when-let* ((saved (or text-scale-mode-remapping my/org-agenda-style--zoom-cookie)))
+          ;; Newer Emacs stores a list of cookies, including the header line;
+          ;; older versions store just one. Retain the representation in use.
+          (let* ((multiple (consp (car saved)))
+                 (cookies (if multiple saved (list saved)))
+                 (live (delq nil (mapcar
+                                 (lambda (cookie)
+                                   (when-let* ((entry (assq (car cookie) face-remapping-alist))
+                                               (spec (car (member (cdr cookie) (cdr entry)))))
+                                     (cons (car cookie) spec)))
+                                 cookies))))
+            (setq-local text-scale-mode-remapping (if multiple live (car live)))
+            (setq my/org-agenda-style--zoom-cookie text-scale-mode-remapping)))
+      (setq my/org-agenda-style--zoom-cookie nil))))
+
+(defvar my/org-agenda-compact nil
+  "Non-nil while building the icon-backed, compact Today view.")
+(defvar my/org-agenda-center-today t
+  "Center Today on wide windows; other agenda views retain their full width.")
+(defvar-local my/org-agenda-focus--owns-centering nil)
+(declare-function olivetti-mode "olivetti" (&optional arg))
+(declare-function olivetti-set-buffer-windows "olivetti" ())
+(defvar olivetti-body-width)
+(defvar olivetti-mode-on-hook)
+
+(defun my/org-agenda-focused-p ()
+  "Identify the standalone Today view, not the Today block inside Review."
+  (and (derived-mode-p 'org-agenda-mode)
+       (save-restriction
+         (widen)
+         (text-property-any (point-min) (point-max) 'my/org-focused-today t))))
+
+(defun my/org-agenda-stop-centering ()
+  "Clean up only the centering that the Today layout enabled."
+  (when my/org-agenda-focus--owns-centering
+    (when (bound-and-true-p olivetti-mode) (olivetti-mode -1))
+    (setq my/org-agenda-focus--owns-centering nil)))
+
+(defun my/org-agenda-style-centering ()
+  "Give Today a 112-column body without wrapping or changing source files."
+  (if (and my/org-agenda-center-today (my/org-agenda-focused-p)
+           (display-graphic-p) (require 'olivetti nil t))
+      (progn
+        (setq-local olivetti-body-width 112)
+        (unless (bound-and-true-p olivetti-mode)
+          (let ((olivetti-mode-on-hook nil)) (olivetti-mode 1))
+          (setq my/org-agenda-focus--owns-centering t)
+          ;; Org resets its major mode on navigation; remove Olivetti's remap
+          ;; before that reset so copied face cookies cannot accumulate.
+          (add-hook 'change-major-mode-hook #'my/org-agenda-stop-centering nil t))
+        (olivetti-set-buffer-windows))
+    (my/org-agenda-stop-centering)
+    (dolist (window (get-buffer-window-list (current-buffer) nil t))
+      (set-window-margins window left-margin-width right-margin-width))))
+
+(defun my/org-agenda-toggle-centering ()
+  "Toggle automatic Today centering, without saving or changing tasks."
+  (interactive)
+  (setq my/org-agenda-center-today (not my/org-agenda-center-today))
+  (when (derived-mode-p 'org-agenda-mode) (my/org-agenda-style-buffer))
+  (message "Today centering %s" (if my/org-agenda-center-today "on" "off")))
 
 (defun my/org-agenda-column-gap (column)
   "Return display-only spacing to COLUMN, measured in normal font cells."
@@ -851,7 +924,28 @@ the sync status. Nerd Icons are display-only; terminal agendas keep text labels.
   (if (derived-mode-p 'org-agenda-mode)
       "" ; current-time / grid rows already start at the details column
     (my/org-agenda-column-gap
-     (if (and (derived-mode-p 'org-mode) (org-get-todo-state)) 46 56))))
+     (if (and (derived-mode-p 'org-mode) (org-get-todo-state))
+          (if my/org-agenda-compact 22 46)
+        (if my/org-agenda-compact 32 56)))))
+
+(defun my/org-agenda-today-prefix-format ()
+  "Keep explicit labels without GUI icons; compact only the focused view."
+  (if my/org-agenda-compact
+      ;; Share one field for times and date warnings instead of reserving an
+      ;; empty warning column on every event. Org retains both when needed.
+      '((agenda . " %i%(my/org-agenda-column-gap 4)%? t%s%(my/org-agenda-heading-gap)"))
+    org-agenda-prefix-format))
+
+(defun my/org-agenda-format-focused-item (original &rest args)
+  "Keep compact columns when Org updates a Today row from its source buffer."
+  (if (or my/org-agenda-compact
+          (and (buffer-live-p org-agenda-buffer)
+               (with-current-buffer org-agenda-buffer
+                 (and (my/org-agenda-focused-p) (my/org-agenda-category-icons)))))
+      (let ((my/org-agenda-compact t)
+            (org-agenda-todo-keyword-format (concat "%s" (my/org-agenda-column-gap 31))))
+        (apply original args))
+    (apply original args)))
 
 (defun my/org-agenda-category-icons ()
   "Return Work/Personal icons only when their font can actually render."
@@ -900,7 +994,9 @@ the sync status. Nerd Icons are display-only; terminal agendas keep text labels.
   "Style the agenda without rewriting rows, source markers, or keymaps."
   (when (derived-mode-p 'org-agenda-mode)
     (require 'face-remap)
-    (setq-local line-spacing 0.18
+    (add-hook 'text-scale-mode-hook #'my/org-agenda-style-zoom-cookie nil t)
+    (my/org-agenda-style-zoom-cookie)
+    (setq-local line-spacing 0.10
                 left-margin-width 2
                 right-margin-width 2
                 display-line-numbers nil
@@ -912,14 +1008,13 @@ the sync status. Nerd Icons are display-only; terminal agendas keep text labels.
         (setcdr entry (cl-remove (cdr cookie) (cdr entry) :test #'equal))))
     (setq my/org-agenda-style--face-cookies
           (mapcar (lambda (spec) (apply #'face-remap-add-relative spec))
-                   '((org-agenda-structure :height 1.10 :weight semibold :box nil)
-                    (org-agenda-date :height 1.0 :weight semibold :slant normal)
-                    (org-agenda-date-today :height 1.0 :weight semibold :slant normal)
-                    (org-agenda-date-weekend :height 1.0 :weight semibold :slant normal)
-                    (org-super-agenda-header :inherit font-lock-keyword-face
-                                            :weight semibold :box nil))))
-    (dolist (window (get-buffer-window-list (current-buffer) nil t))
-      (set-window-margins window left-margin-width right-margin-width))
+                   '((org-agenda-structure :inherit default :height 1.0 :weight semibold :box nil)
+                     (org-agenda-date :inherit default :height 1.0 :weight normal :slant normal)
+                     (org-agenda-date-today :inherit default :height 1.0 :weight normal :slant normal)
+                     (org-agenda-date-weekend :inherit default :height 1.0 :weight normal :slant normal)
+                     (org-super-agenda-header :inherit default :height 1.0
+                                             :weight semibold :box nil :overline nil))))
+    (my/org-agenda-style-centering)
     (my/org-agenda-style-now-rule)))
 
 (defun my/org-configure-agenda-style ()
@@ -945,6 +1040,8 @@ the sync status. Nerd Icons are display-only; terminal agendas keep text labels.
         org-agenda-current-time-string (my/org-agenda-now-string))
   (add-hook 'org-agenda-mode-hook #'my/org-agenda-style-buffer)
   (add-hook 'org-agenda-finalize-hook #'my/org-agenda-style-buffer t)
+  (advice-add #'org-agenda-format-item :around #'my/org-agenda-format-focused-item)
+  (advice-add #'org-agenda-highlight-todo :around #'my/org-agenda-format-focused-item)
   (advice-add #'org-agenda-schedule :after #'my/org-review-refresh-after-date-change)
   (advice-add #'org-agenda-deadline :after #'my/org-review-refresh-after-date-change))
 
@@ -1058,9 +1155,15 @@ the sync status. Nerd Icons are display-only; terminal agendas keep text labels.
              (file ,(my/org-file "calendar-personal.org"))
              "* %?\n:org-gcal:\n%(my/org-capture-all-day-range)\n:END:\n" :empty-lines 1))
           org-agenda-custom-commands
-          `(("d" "Today" agenda ""
-             ((org-agenda-overriding-header "Today")
-              (org-super-agenda-groups ',(my/org-today-groups))))
+           `(("d" "Today" agenda ""
+              ((org-agenda-overriding-header ,(propertize "Today" 'my/org-focused-today t))
+               (my/org-agenda-compact (and (my/org-agenda-category-icons) t))
+               (org-agenda-prefix-format
+                (let ((my/org-agenda-compact (and (my/org-agenda-category-icons) t)))
+                  (my/org-agenda-today-prefix-format)))
+               (org-agenda-todo-keyword-format
+                (concat "%s" (my/org-agenda-column-gap (if (my/org-agenda-category-icons) 31 55))))
+               (org-super-agenda-groups ',(my/org-today-groups))))
              ("r" "Review: today and other tasks" ,(my/org-review-blocks))
             ("w" "Work review" ,(my/org-review-blocks)
              ((org-agenda-files ',(my/org-profile-files "work"))))
@@ -1103,7 +1206,8 @@ the sync status. Nerd Icons are display-only; terminal agendas keep text labels.
   (advice-add #'org-agenda-prepare :after #'my/org-order-agenda-keywords)
   (map! :map org-agenda-mode-map
         :localleader
-        :desc "Edit event" "e" #'my/org-calendar-repeat-edit))
+        :desc "Edit event" "e" #'my/org-calendar-repeat-edit
+        :desc "Toggle Today centering" "v" #'my/org-agenda-toggle-centering))
 
 (use-package! org-super-agenda
   :after org-agenda
@@ -1123,9 +1227,12 @@ the sync status. Nerd Icons are display-only; terminal agendas keep text labels.
       :desc "Capture Personal task" "n p" #'my/org-capture-personal-task)
 #+end_src
 
-** Personal calendar test
+** Personal calendar sync
 
-Only the personal test calendar syncs automatically. Finishing event capture
+Only the configured personal calendar syncs automatically. Its canonical ID
+lives in private settings; a primary calendar also needs an exact explicit
+=my/org-calendar-approved-primary-id= match. The alias =primary= is not allowed.
+Finishing event capture
 or saving edits queues them; =CANCELLED= queues remote cancellation. Google is
 checked every five minutes and when opening the agenda. Conflicts preserve
 both versions for explicit review. Work stays local. Optional macOS Keychain
@@ -1134,14 +1241,40 @@ per Emacs session. Background refresh never opens a browser or prompts.
 Recurring series use one stored heading plus a private dated-occurrence cache.
 Agenda =, e= chooses occurrence/series edit scope; whole-series writes need approval.
 
+=SPC n v= opens a separate read-only graphical week in the main window, not a
+popup. It combines central events, scheduled tasks, deadline date markers, and
+cached Google occurrences with pending occurrence changes. Deadlines do not
+reserve time; undated tasks remain in Review. =[= / =]= change weeks, =F= filters
+Both/Work/Personal, =RET= visits the source, =g= reloads and returns to today, and
+=q= closes. =M-SPC= opens the Doom leader. A recurring occurrence visits its
+shared series heading; use agenda =, e= for an occurrence edit. The view needs
+graphical SVG support and uses a pinned =org-timegrid= with no mutation callbacks.
+
+The Personal sync indicator is an icon in agenda, graphical-week, calendar-file,
+and calendar-control buffers. Elsewhere it is hidden unless login, conflict
+review, or a failed retry needs attention. Hover explains the status; left-click
+opens =SPC n g s=; right-click offers Login, Keychain setup, and More controls,
+including pause/resume. Mouse =Sync now= is disabled while paused. The icons
+cover up to date, pending/syncing, login needed, attention needed, paused, and
+failed retries, with text-symbol fallbacks when Nerd Icons cannot render.
+This is always Personal status, even in a local Work calendar buffer. Hiding
+the icon does not pause sync, and opening its menu does not sync or save files.
+
+Tasks and Work events are not mapped to Google. Private settings, encrypted
+tokens, and occurrence caches stay outside tracked repositories. Do not use raw
+=org-gcal-sync= / =org-gcal-fetch=: those bypass the automatic sync safeguards.
+Restart resumption and natural token expiry still need live verification.
+Personal Google Tasks and Work-calendar integration are proposals, not enabled.
+See [[file:tests/README.md][Org workflow checks]] for safe regression-test commands.
+
 #+begin_src emacs-lisp
 ;; BEGIN org-calendar
-(defvar my/org-gcal-test-calendar-id nil
-  "ID of the personal secondary calendar used for sync testing.")
+(defvar my/org-calendar-id nil
+  "Canonical ID of the personal Google Calendar configured in private settings.")
 
 (defvar my/org-calendar-settings-file
   (expand-file-name "~/.config/doom-private/org-calendar.el")
-  "Untracked settings for the personal Google Calendar test.")
+  "Untracked settings for personal Google Calendar sync.")
 
 (defun my/org-calendar-open-auth-url (url &rest _)
   "Open authorization URL in Zen, with a clipboard fallback."
@@ -1196,6 +1329,13 @@ Agenda =, e= chooses occurrence/series edit scope; whole-series writes need appr
                                         (or (bound-and-true-p doom-user-dir) user-emacs-directory)))))
   "Batch worker for calendar authorization.")
 
+(load (expand-file-name "org-calendar-config.el"
+                        (file-name-directory my/org-calendar-auth-worker-file)) nil t)
+
+(autoload 'my/org-calendar-week
+  (expand-file-name "org-calendar-view.el" (file-name-directory my/org-calendar-auth-worker-file))
+  "Open the read-only SVG week." t)
+
 (defun my/org-calendar-session-ready-p ()
   "Return non-nil when this session has a token with a minute to spare."
   (and (stringp my/org-calendar-access-token)
@@ -1210,16 +1350,16 @@ Agenda =, e= chooses occurrence/series edit scope; whole-series writes need appr
            (file-executable-p my/org-calendar-keychain-helper-file))))
 
 (defun my/org-calendar-access-token (original calendar-id)
-  "Never wait for browser login in the editor for the test CALENDAR-ID."
-  (if (equal calendar-id my/org-gcal-test-calendar-id)
+  "Never wait for browser login in the editor for the personal CALENDAR-ID."
+  (if (equal calendar-id my/org-calendar-id)
       (if (my/org-calendar-session-ready-p)
           my/org-calendar-access-token
         (user-error "Calendar login required: SPC n g l; Emacs stays usable during login"))
     (funcall original calendar-id)))
 
 (defun my/org-calendar-refresh-token (original calendar-id)
-  "Fail without blocking when the test calendar rejects its token."
-  (if (equal calendar-id my/org-gcal-test-calendar-id)
+  "Fail without blocking when the personal calendar rejects its token."
+  (if (equal calendar-id my/org-calendar-id)
       (progn
         (setq my/org-calendar-access-token nil my/org-calendar-token-expiration nil)
         (deferred:fail "Calendar authorization rejected; run SPC n g l, then retry"))
@@ -1380,17 +1520,16 @@ Agenda =, e= chooses occurrence/series edit scope; whole-series writes need appr
   (advice-add #'org-gcal--refile-post :override #'ignore))
 
 (defun my/org-calendar-prepare ()
-  "Load local credentials and configure only the personal test calendar."
+  "Load local credentials and configure only the explicitly approved calendar."
   (unless (file-readable-p my/org-calendar-settings-file)
     (user-error "Configure %s first; see org-agenda.org" my/org-calendar-settings-file))
   (load my/org-calendar-settings-file nil t)
-  (unless (and (stringp my/org-gcal-test-calendar-id)
-               (string-suffix-p "@group.calendar.google.com" my/org-gcal-test-calendar-id)
+  (unless (and (my/org-calendar-configured-id-p my/org-calendar-id)
                (stringp (bound-and-true-p org-gcal-client-id))
                (not (string-empty-p org-gcal-client-id))
                (stringp (bound-and-true-p org-gcal-client-secret))
                (not (string-empty-p org-gcal-client-secret)))
-    (user-error "Set OAuth credentials and a secondary personal test calendar ID first"))
+    (user-error "Set OAuth credentials and a secondary ID or explicitly approved primary ID first"))
   ;; Keep encrypted authorization tokens outside both tracked repositories.
   (setq oauth2-auto-plstore
         (expand-file-name "org-calendar-tokens.plist"
@@ -1401,7 +1540,7 @@ Agenda =, e= chooses occurrence/series edit scope; whole-series writes need appr
   (advice-add #'org-gcal--get-access-token :around #'my/org-calendar-access-token)
   (advice-add #'org-gcal--refresh-token :around #'my/org-calendar-refresh-token)
   (setq org-gcal-fetch-file-alist
-        (list (cons my/org-gcal-test-calendar-id (my/org-file "calendar-personal.org")))
+        (list (cons my/org-calendar-id (my/org-file "calendar-personal.org")))
         org-gcal-auto-archive nil
         org-gcal-remove-api-cancelled-events nil
         org-gcal-remove-events-with-cancelled-todo nil
@@ -1417,12 +1556,12 @@ Agenda =, e= chooses occurrence/series edit scope; whole-series writes need appr
   (unless (and (derived-mode-p 'org-mode)
                (buffer-file-name)
                (file-equal-p (buffer-file-name) (my/org-file "calendar-personal.org")))
-    (user-error "Only events in calendar-personal.org can use the test calendar"))
+    (user-error "Only events in calendar-personal.org can use personal calendar sync"))
   (org-back-to-heading t)
   (when (org-get-todo-state)
     (user-error "Tasks and completed or cancelled events cannot be published"))
   (let ((calendar-id (org-entry-get (point) "calendar-id")))
-    (when (and calendar-id (not (equal calendar-id my/org-gcal-test-calendar-id)))
+    (when (and calendar-id (not (equal calendar-id my/org-calendar-id)))
       (user-error "This event belongs to a different calendar"))))
 
 (defun my/org-calendar-event-marker ()
@@ -1439,12 +1578,12 @@ Agenda =, e= chooses occurrence/series edit scope; whole-series writes need appr
   (my/org-calendar-prepare)
   (unless (my/org-calendar-session-ready-p)
     (user-error "Log in first with SPC n g l, then fetch; SPC n g m c cancels login"))
-  (when (yes-or-no-p "Fetch test calendar? Publish local event edits first; Google fields may replace them. ")
+  (when (yes-or-no-p "Fetch personal calendar? Publish local event edits first; Google fields may replace them. ")
     (org-gcal-fetch)
     (message "Calendar fetch started; check notifications and refresh agenda with gr")))
 
 (defun my/org-calendar-publish ()
-  "Publish the selected personal event after confirming the test calendar."
+  "Publish the selected personal event after confirming the destination."
   (interactive)
   (my/org-calendar-prepare)
   (unless (my/org-calendar-session-ready-p)
@@ -1452,25 +1591,25 @@ Agenda =, e= chooses occurrence/series edit scope; whole-series writes need appr
   (org-with-point-at (my/org-calendar-event-marker)
     (my/org-calendar-check-event)
     (when (yes-or-no-p
-           (format "Publish %s to personal test calendar %s? "
-                   (org-get-heading t t t t) my/org-gcal-test-calendar-id))
-      (org-entry-put (point) "calendar-id" my/org-gcal-test-calendar-id)
+            (format "Publish %s to personal calendar %s? "
+                    (org-get-heading t t t t) my/org-calendar-id))
+      (org-entry-put (point) "calendar-id" my/org-calendar-id)
       (save-buffer)
       (org-gcal-post-at-point)
       (message "Publish requested; check org-gcal notifications and Google Calendar"))))
 
 (defun my/org-calendar-cancel ()
-  "Cancel a linked personal test event remotely, keeping its local heading."
+  "Cancel a linked personal event remotely, keeping its local heading."
   (interactive)
   (my/org-calendar-prepare)
   (unless (my/org-calendar-session-ready-p)
     (user-error "Log in first with SPC n g l, then cancel the event"))
   (org-with-point-at (my/org-calendar-event-marker)
     (my/org-calendar-check-event)
-    (unless (and (equal (org-entry-get (point) "calendar-id") my/org-gcal-test-calendar-id)
+    (unless (and (equal (org-entry-get (point) "calendar-id") my/org-calendar-id)
                  (or (org-entry-get (point) "entry-id") (org-entry-get (point) "ID")))
       (user-error "Publish or fetch this event before cancelling it"))
-    (when (yes-or-no-p (format "Cancel %s on the personal test calendar? "
+    (when (yes-or-no-p (format "Cancel %s on the personal calendar? "
                               (org-get-heading t t t t)))
       (org-gcal-delete-at-point)
       (message "Cancellation requested; check notifications before refreshing the agenda"))))
@@ -1480,6 +1619,7 @@ Agenda =, e= chooses occurrence/series edit scope; whole-series writes need appr
   :commands (org-gcal-fetch org-gcal-post-at-point org-gcal-delete-at-point))
 
 (map! :leader
+      :desc "Visual week (read only)" "n v" #'my/org-calendar-week
       (:prefix ("n g" . "Calendar")
        :desc "Login" "l" #'my/org-calendar-login
        :desc "Status" "s" #'my/org-calendar-auto-review
@@ -1579,6 +1719,9 @@ Emacs already holds that permission, so its child process inherits it.
 The first run is five minutes after startup, which covers notes written just
 before the last quit, and then every thirty minutes. =SPC n B= runs it now.
 Failures report in the echo area, and the log is =~/Library/Logs/org-backup.log=.
+Overlapping runs are skipped: Emacs keeps one process, and the script holds a
+repository-wide lock. If a forced termination leaves =.git/org-backup.lock=,
+check its =pid= and confirm that backup has stopped before removing the lock.
 
 #+begin_src emacs-lisp
 (defvar my/org-backup-script (expand-file-name "~/.local/bin/org-backup")
@@ -1587,7 +1730,11 @@ Failures report in the echo area, and the log is =~/Library/Logs/org-backup.log=
 (defun my/org-backup ()
   "Commit and push the org repository, in the background."
   (interactive)
-  (when (file-executable-p my/org-backup-script)
+  (cond
+   ((let ((process (get-process "org-backup")))
+      (and process (process-live-p process)))
+    (message "Org backup is already running; skipped"))
+   ((file-executable-p my/org-backup-script)
     (let ((buffer (get-buffer-create " *org-backup*")))
       (with-current-buffer buffer (erase-buffer))
       (make-process
@@ -1601,7 +1748,7 @@ Failures report in the echo area, and the log is =~/Library/Logs/org-backup.log=
            (unless (zerop (process-exit-status proc))
              (message "org backup failed: %s"
                       (string-trim (with-current-buffer (process-buffer proc)
-                                     (buffer-string)))))))))))
+                                      (buffer-string))))))))))))
 
 ;; Cancel first, so reloading this file does not stack a second timer and run two
 ;; git processes at once. `defvar' keeps the old value, which is what cancels it.

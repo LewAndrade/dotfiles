@@ -6,7 +6,8 @@
 (defvar epg-pinentry-mode)
 (defvar oauth2-auto-plstore)
 (defvar oauth2-auto-manually-auth)
-(defvar my/org-gcal-test-calendar-id)
+(load (expand-file-name "org-calendar-config.el"
+                        (file-name-directory (or load-file-name buffer-file-name))) nil t)
 (defvar my/org-calendar-worker-failure-kind "temporary"
   "Safe error category; never send dependency error messages to the editor.")
 
@@ -87,9 +88,8 @@
                     oauth2-auto-plstore store
                     epg-pinentry-mode 'loopback)
               (load settings nil t)
-              (unless (and (stringp my/org-gcal-test-calendar-id)
-                           (string-suffix-p "@group.calendar.google.com" my/org-gcal-test-calendar-id))
-                (error "Not a secondary test calendar"))
+              (unless (my/org-calendar-configured-id-p my/org-calendar-id)
+                (error "Calendar ID requires explicit approval"))
               (require 'org-gcal)
               (advice-add 'oauth2-auto--plstore-read :around #'my/org-calendar-worker-read-token)
               (advice-add 'oauth2-auto--request-access-parse :filter-return
@@ -110,7 +110,7 @@
               ;; Encryption stays enabled; no passphrase is written to disk.
               (advice-add 'plstore-passphrase-callback-function :override
                           (lambda (&rest _) (copy-sequence passphrase)))
-              (let ((token (my/org-calendar-worker-token my/org-gcal-test-calendar-id refresh-only)))
+              (let ((token (my/org-calendar-worker-token my/org-calendar-id refresh-only)))
                 (unless (and (stringp (plist-get token :access-token))
                              (not (string-empty-p (plist-get token :access-token)))
                              (numberp (plist-get token :expiration))

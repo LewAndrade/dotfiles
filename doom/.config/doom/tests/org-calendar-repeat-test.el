@@ -1,5 +1,7 @@
 ;;; org-calendar-repeat-test.el -*- lexical-binding: t; -*-
 (load (expand-file-name "org-calendar-keychain-test.el" (file-name-directory load-file-name)) nil t)
+(load (expand-file-name "org-calendar-view-test.el" (file-name-directory load-file-name)) nil t)
+(load (expand-file-name "org-calendar-status-test.el" (file-name-directory load-file-name)) nil t)
 
 (defun my/calendar-repeat-test-seed (&optional count)
   "Create one indefinite Google series and COUNT expanded test occurrences."

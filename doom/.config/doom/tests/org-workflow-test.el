@@ -10,6 +10,7 @@
 (setq native-comp-enable-subr-trampolines nil)
 (defconst my/org-calendar-test-worker-file
   (expand-file-name "../lisp/org-calendar-auth.el" (file-name-directory load-file-name)))
+(defvar my/org-calendar-auth-worker-file my/org-calendar-test-worker-file)
 
 ;; Evaluate the actual helpers, without Doom, credentials, or network access.
 (with-temp-buffer
@@ -569,6 +570,91 @@
   (should (equal (my/org-agenda-format-date '(10 9 2026)) "Friday, 9 October 2026"))
   (should (equal (my/org-agenda-format-date '(1 1 2027)) "Friday, 1 January 2027")))
 
+(ert-deftest my/org-agenda-focus-compacts-only-icon-backed-today-and-keeps-actions ()
+  (cl-letf (((symbol-function 'my/org-agenda-category-icons)
+             (lambda () '(("Work" ("W")) ("Personal" ("P"))))))
+    (my/org-test-workspace
+      (my/org-test-append "work.org"
+                          (format "\n* TODO Focus task\nSCHEDULED: <%s 10:00>\n"
+                                  (my/org-test-date 0)))
+      (my/org-test-append "calendar-personal.org"
+                          (format "\n* Focus event\n<%s 16:00-17:00>\n"
+                                  (my/org-test-date 0)))
+      (save-window-excursion
+        (org-agenda nil "d")
+        (should (my/org-agenda-focused-p))
+        (dotimes (_ 2)
+          (goto-char (point-min)) (search-forward "Focus task")
+          (should (= (get-text-property (- (point) (length "Focus task") 2)
+                                       'my/org-agenda-column) 31))
+          (beginning-of-line)
+          (should (markerp (org-get-at-bol 'org-hd-marker)))
+          (should-not (string-match-p "Work" (buffer-substring-no-properties
+                                              (point) (line-end-position))))
+          (org-agenda-redo))
+        (goto-char (point-min)) (search-forward "Focus task")
+        (let ((org-log-done nil)) (org-agenda-todo "DOING"))
+        (beginning-of-line) (search-forward "Focus task")
+        (should (= (get-text-property (- (point) (length "Focus task") 2)
+                                     'my/org-agenda-column) 31))
+        (org-agenda nil "r")
+        (should-not (my/org-agenda-focused-p))
+        (goto-char (point-min)) (search-forward "Focus task")
+        (should (= (get-text-property (- (point) (length "Focus task") 2)
+                                     'my/org-agenda-column) 55))))))
+
+(ert-deftest my/org-agenda-focus-centering-is-idempotent-and-cleaned-before-mode-reset ()
+  (skip-unless (require 'olivetti nil t))
+  (my/org-test-workspace
+    (cl-letf (((symbol-function 'my/org-agenda-category-icons) (lambda () nil)))
+      (save-window-excursion
+        (org-agenda nil "d")
+        (cl-letf (((symbol-function 'display-graphic-p) (lambda (&rest _) t)))
+          (my/org-agenda-style-buffer)
+          (should olivetti-mode)
+          (should-not visual-line-mode)
+          (let ((remaps (copy-tree face-remapping-alist)))
+            (dotimes (_ 5) (my/org-agenda-style-buffer))
+            (should (equal remaps face-remapping-alist)))
+          (let ((my/org-agenda-center-today t))
+            (my/org-agenda-toggle-centering)
+            (should-not olivetti-mode)
+            (should (equal (window-margins) '(2 . 2)))
+            (my/org-agenda-toggle-centering)
+            (should olivetti-mode)))
+        (org-agenda-mode)
+        (should-not olivetti-mode)
+        (org-agenda nil "d")
+        (dotimes (_ 3)
+          (org-agenda-earlier 1)
+          (org-agenda-later 1))
+        (org-agenda nil "r")
+        (should-not olivetti-mode)
+        (should (equal (window-margins) '(2 . 2)))))))
+
+(ert-deftest my/org-agenda-focus-headings-stay-plain-in-light-and-dark-themes ()
+  (my/org-test-workspace
+    (save-window-excursion
+      (org-agenda nil "d")
+      (dolist (cookie my/org-agenda-style--face-cookies)
+        (should-not (plist-get (cdr cookie) :background))
+        (should-not (plist-get (cdr cookie) :overline)))
+      (let ((header (seq-find (lambda (cookie) (eq (car cookie) 'org-super-agenda-header))
+                             my/org-agenda-style--face-cookies)))
+        (should (eq (plist-get (cdr header) :inherit) 'default))
+        (should (= (plist-get (cdr header) :height) 1.0))))))
+
+(ert-deftest my/org-agenda-focus-shared-time-warning-field-keeps-all-details ()
+  (cl-letf (((symbol-function 'my/org-agenda-category-icons)
+             (lambda () '(("Work" ("W")) ("Personal" ("P"))))))
+    (my/org-test-workspace
+      (my/org-test-append "work.org"
+                          (format "\n* TODO Timed plan\nSCHEDULED: <%s 09:00>\n* WAIT Late task\nDEADLINE: <%s>\n"
+                                  (my/org-test-date 0) (my/org-test-date -2)))
+      (let ((agenda (my/org-test-agenda "d")))
+        (dolist (detail '("09:00" "Scheduled:" "Due 2 d. ago:" "TODO" "WAIT"))
+          (should (string-match-p (regexp-quote detail) agenda)))))))
+
 (ert-deftest my/org-agenda-style-redraw-keeps-row-text-markers-and-modeline ()
   (my/org-test-workspace
     (my/org-test-append "work.org" "\n* DOING Styled work task\n")
@@ -671,7 +757,17 @@
                                  :test #'equal))))
         (should (member '(:underline t)
                         (cdr (assq 'org-agenda-date face-remapping-alist))))
-        (should (= text-scale-mode-amount 1))))))
+        (should (= text-scale-mode-amount 1))
+        ;; Org keeps the zoom face but normally loses its removal cookie.
+        ;; Org Modern also copies that face. Resetting zoom must remove it.
+        (let ((zoom-cookies (if (consp (car text-scale-mode-remapping))
+                                text-scale-mode-remapping
+                              (list text-scale-mode-remapping))))
+          (should (car zoom-cookies))
+          (text-scale-set 0)
+          (should-not text-scale-mode)
+          (dolist (cookie zoom-cookies)
+            (should-not (member (cdr cookie) (cdr (assq (car cookie) face-remapping-alist))))))))))
 
 (ert-deftest my/org-agenda-style-normal-day-and-week-keep-every-row-and-grouping ()
   (my/org-test-workspace
@@ -814,6 +910,68 @@
     (unwind-protect
         (should-error (my/org-calendar-prepare) :type 'user-error)
       (delete-file my/org-calendar-settings-file))))
+
+(ert-deftest my/org-calendar-primary-approval-is-exact-and-never-an-alias ()
+  (let ((my/org-calendar-approved-primary-id nil))
+    (should (my/org-calendar-configured-id-p "test@group.calendar.google.com"))
+    (should-not (my/org-calendar-configured-id-p "personal@example.com"))
+    (setq my/org-calendar-approved-primary-id "personal@example.com")
+    (should (my/org-calendar-configured-id-p "personal@example.com"))
+    (should-not (my/org-calendar-configured-id-p "other@example.com"))
+    (should-not (my/org-calendar-configured-id-p "primary"))
+    (should-not (my/org-calendar-configured-id-p "personal@example.com/events"))
+    (setq my/org-calendar-approved-primary-id "primary")
+    (should-not (my/org-calendar-configured-id-p "primary"))))
+
+(ert-deftest my/org-calendar-prepare-maps-only-the-approved-primary-calendar ()
+  (my/org-test-workspace
+    (let* ((my/org-calendar-settings-file (make-temp-file "org-calendar-settings-"))
+           (my/org-calendar-id "personal@example.com")
+           (my/org-calendar-approved-primary-id my/org-calendar-id)
+           (org-gcal-client-id "test-client")
+           (org-gcal-client-secret "test-secret")
+           (org-gcal-fetch-file-alist nil))
+      (unwind-protect
+          (cl-letf (((symbol-function 'require) (lambda (&rest _) t)))
+            (my/org-calendar-prepare)
+            (should (equal org-gcal-fetch-file-alist
+                           (list (cons my/org-calendar-id (my/org-file "calendar-personal.org"))))))
+        (delete-file my/org-calendar-settings-file)))))
+
+(ert-deftest my/org-calendar-worker-allows-approved-primary-and-refuses-unapproved-ids ()
+  (skip-unless (locate-library "org-gcal"))
+  (let* ((directory (make-temp-file "org-calendar-primary-worker-" t))
+         (settings (expand-file-name "settings.el" directory))
+         (store (expand-file-name "tokens.plist" directory))
+         (input (expand-file-name "input" directory))
+         (setup '(with-eval-after-load 'org-gcal
+                   (defun oauth2-auto-plist (user _provider)
+                     (unless (equal user "personal@example.com") (error "Wrong token identity"))
+                     (let ((promise (aio-promise)))
+                       (aio-resolve promise
+                                    (lambda () (list :access-token "fake-primary-token"
+                                                     :expiration (+ (float-time) 3600))))
+                       promise)))))
+    (unwind-protect
+        (progn
+          (write-region "fake-test-passphrase\n" nil input nil 'silent)
+          (dolist (case '(("personal@example.com" "personal@example.com" 0)
+                          ("personal@example.com" nil 1)
+                          ("other@example.com" "personal@example.com" 1)
+                          ("primary" "primary" 1)))
+            (write-region (format "(setq my/org-calendar-id %S my/org-calendar-approved-primary-id %S)\n"
+                                  (nth 0 case) (nth 1 case)) nil settings nil 'silent)
+            (with-temp-buffer
+              (should (= (nth 2 case)
+                         (call-process (expand-file-name invocation-name invocation-directory)
+                                       input t nil "-Q" "--batch" "--eval"
+                                       (prin1-to-string `(setq load-path ',load-path))
+                                       "--eval" (prin1-to-string setup)
+                                       "-l" my/org-calendar-test-worker-file "--" settings store)))
+              (if (= (nth 2 case) 0)
+                  (should (string-match-p "ORG-CALENDAR TOKEN" (buffer-string)))
+                (should-not (string-match-p "ORG-CALENDAR TOKEN\\|ORG-CALENDAR URL" (buffer-string)))))))
+      (delete-directory directory t))))
 
 (ert-deftest my/org-calendar-file-and-state-guards ()
   (my/org-test-workspace

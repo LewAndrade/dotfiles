@@ -14,6 +14,9 @@
 (package! org-gcal
   :recipe (:host github :repo "kidd/org-gcal.el"))
 (package! olivetti)
+(package! org-timegrid
+  :recipe (:host github :repo "Gleek/org-timegrid")
+  :pin "561b3b2f9ca2b7a148d4aa8d98f2943e79d059d3")
 (package! treemacs-all-the-icons)
 (package! posframe)
 
