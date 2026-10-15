@@ -14,6 +14,8 @@
 (declare-function my/org-calendar-repeat--series-marker "org-calendar-repeat" (id))
 (declare-function my/org-calendar-repeat--ensure-state "org-calendar-repeat" ())
 (declare-function my/org-calendar-auto--same-file-p "org-calendar-auto" (file))
+(declare-function my/org-tasks-block--pairs "org-tasks-blocks" ())
+(defvar my/org-tasks-block-mode)
 (defvar my/org-calendar-auto--calendar)
 (defvar my/org-calendar-id)
 (defvar my/org-calendar-repeat--events)
@@ -65,7 +67,31 @@
                   (format "%s %s" state (org-timegrid-event-title event))))
           (setf (org-timegrid-event-source event) (my/org-calendar-view--source marker))
           (push event result))))
-    (nreverse result)))
+    (my/org-calendar-view--task-blocks (nreverse result) start end)))
+
+(defun my/org-calendar-view--task-blocks (events start end)
+  "Show confirmed task/block pairs once, using task state and navigation."
+  (if (not (and (bound-and-true-p my/org-tasks-block-mode) (fboundp 'my/org-tasks-block--pairs))) events
+    (let ((pairs (seq-remove (lambda (pair) (plist-get pair :reason)) (my/org-tasks-block--pairs))))
+      (dolist (pair pairs)
+        (let* ((task (plist-get pair :task)) (marker (plist-get task :marker))
+               (block (plist-get (plist-get pair :block) :marker))
+               (state (plist-get task :state))
+               (from (my/org-calendar-view--google-minute
+                      (list :dateTime (format-time-string "%FT%TZ" (plist-get pair :start) t))))
+               (to (my/org-calendar-view--google-minute
+                    (list :dateTime (format-time-string "%FT%TZ" (plist-get pair :end) t)))))
+          (setq events (seq-remove (lambda (event)
+                                     (member (plist-get (org-timegrid-event-source event) :heading-marker)
+                                             (list marker block))) events))
+          (when (and (member state '("TODO" "DOING" "WAIT")) (< from end) (> to start))
+            (push (org-timegrid-event-create
+                   :id (list 'linked-task (plist-get task :key))
+                   :title (concat state " " (plist-get task :title))
+                   :start from :end to :all-day nil
+                   :color (face-foreground 'font-lock-string-face nil t)
+                   :source (my/org-calendar-view--source marker)) events))))
+      events)))
 
 (defun my/org-calendar-view--deadlines (start end)
   "Show deadlines as labelled date-rail markers, never as reserved work time."

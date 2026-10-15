@@ -1264,7 +1264,11 @@ Tasks and Work events are not mapped to Google. Private settings, encrypted
 tokens, and occurrence caches stay outside tracked repositories. Do not use raw
 =org-gcal-sync= / =org-gcal-fetch=: those bypass the automatic sync safeguards.
 Restart resumption and natural token expiry still need live verification.
-Personal Google Tasks and Work-calendar integration are proposals, not enabled.
+Personal Google Tasks sync uses a separate private approval; Work-calendar
+integration is not connected.
+Tasks authorization and read-only list inspection are available through
+=SPC n g m t=. Setup adds a separate Tasks grant for the approved Personal
+account, without replacing Calendar's token. It does not upload or import tasks.
 See [[file:tests/README.md][Org workflow checks]] for safe regression-test commands.
 
 #+begin_src emacs-lisp
@@ -1335,6 +1339,20 @@ See [[file:tests/README.md][Org workflow checks]] for safe regression-test comma
 (autoload 'my/org-calendar-week
   (expand-file-name "org-calendar-view.el" (file-name-directory my/org-calendar-auth-worker-file))
   "Open the read-only SVG week." t)
+
+(autoload 'my/org-tasks-setup
+  (expand-file-name "org-tasks-access.el" (file-name-directory my/org-calendar-auth-worker-file))
+  "Authorize Tasks and inspect existing lists without syncing." t)
+
+(dolist (command '(my/org-tasks-review my/org-tasks-sync-now my/org-tasks-mode))
+  (autoload command
+    (expand-file-name "org-tasks-sync.el" (file-name-directory my/org-calendar-auth-worker-file))
+    "Guarded Personal task sync controls." t))
+
+(dolist (command '(my/org-tasks-block-link my/org-tasks-block-unlink my/org-tasks-block-visit))
+  (autoload command
+    (expand-file-name "org-tasks-blocks.el" (file-name-directory my/org-calendar-auth-worker-file))
+    "Local, confirmed task/time-block display controls." t))
 
 (defun my/org-calendar-session-ready-p ()
   "Return non-nil when this session has a token with a minute to spare."
@@ -1443,7 +1461,7 @@ See [[file:tests/README.md][Org workflow checks]] for safe regression-test comma
         (progn
           (process-put process 'stopped t)
           (delete-process process)
-          (my/org-calendar-login-sentinel process "stopped"))
+          (funcall (process-sentinel process) process "stopped"))
       (message "No calendar login is running"))))
 
 (defun my/org-calendar--launch-login (passphrase &optional background)
@@ -1620,13 +1638,21 @@ See [[file:tests/README.md][Org workflow checks]] for safe regression-test comma
 
 (map! :leader
       :desc "Visual week (read only)" "n v" #'my/org-calendar-week
+      (:prefix ("n T" . "Personal Tasks")
+       :desc "Status and review" "s" #'my/org-tasks-review
+       :desc "Sync now" "g" #'my/org-tasks-sync-now
+       :desc "Pause/resume" "p" #'my/org-tasks-mode
+       :desc "Link a time block locally" "l" #'my/org-tasks-block-link
+       :desc "Unlink a time block locally" "u" #'my/org-tasks-block-unlink
+       :desc "Visit linked Calendar block" "b" #'my/org-tasks-block-visit)
       (:prefix ("n g" . "Calendar")
        :desc "Login" "l" #'my/org-calendar-login
        :desc "Status" "s" #'my/org-calendar-auto-review
        :desc "Keychain setup" "k" #'my/org-calendar-keychain-enable
        (:prefix ("m" . "More")
         :desc "Sync now" "s" #'my/org-calendar-fetch
-        :desc "Cancel login" "c" #'my/org-calendar-stop-login
+         :desc "Cancel login" "c" #'my/org-calendar-stop-login
+          :desc "Tasks authorization" "t" #'my/org-tasks-setup
         :desc "Pause/resume" "p" #'my/org-calendar-auto-mode)))
 
 (after! org
@@ -1635,9 +1661,46 @@ See [[file:tests/README.md][Org workflow checks]] for safe regression-test comma
   (when (file-readable-p my/org-calendar-settings-file)
     (condition-case nil (my/org-calendar-auto-mode 1)
       (user-error (setq my/org-calendar-auto-mode nil)
-                  (message "Personal calendar automation awaits local setup")))))
+                   (message "Personal calendar automation awaits local setup")))))
+
+(after! org
+  ;; A separate private approval pins the Personal account and existing Tasks list.
+  (let ((settings (expand-file-name "org-tasks.el" (file-name-directory my/org-calendar-settings-file))))
+    (when (file-readable-p settings)
+      (load (expand-file-name "org-tasks-sync.el" (file-name-directory my/org-calendar-auth-worker-file)) nil t)
+      (condition-case nil (my/org-tasks-mode 1)
+        (error (message "Personal Tasks automation awaits review; SPC n T s shows status")))
+      (when my/org-tasks--scope
+        (load (expand-file-name "org-tasks-blocks.el" (file-name-directory my/org-calendar-auth-worker-file)) nil t)
+        (my/org-tasks-block-mode 1)))))
 
 #+end_src
+
+** Personal Tasks sync
+
+All saved Personal tasks in =personal.org= sync with the approved existing Google
+Tasks list. Phone-created tasks go under =Tasks/=; no opt-in tag or refile is needed.
+Work and private notes stay out. Shared fields are title, scheduled day, and
+completion. =DOING= and =WAIT= stay incomplete on the phone; Org times, durations,
+deadlines, and repeaters stay local. Historical Google completions are left out.
+Saving queues a cycle after two seconds; polling also runs every five minutes
+and when opening/redrawing the agenda. Unsaved edits are never sent or replaced.
+Conflicts, cancellation, and deletion need explicit choices in =SPC n T s=.
+=SPC n T p= pauses/resumes, and =SPC n T g= requests a guarded sync. Tasks has its
+own modeline icon and encrypted grant, using the existing Keychain unlock.
+The exact account/list approval and private JSON cache live outside Git.
+
+Some tasks created with a time in Google Calendar also expose a separate
+focus-time block. Google provides no reliable task/block identity link. After
+confirming a pair with =SPC n T l=, Today/Review and the graphical week use the
+block's time on one task row. =RET= opens the task; =SPC n T b= opens its Calendar
+source. Completion hides the combined row; reopening restores it.
+=SPC n T u= restores separate displays without changing either source or Google.
+Links live in private per-account/list/calendar JSON outside Git, not Org properties.
+No title-based matching or companion events are created. Date mismatches, local
+task times/repeaters, Calendar conflicts, and unsupported blocks stay separate.
+Change the time in the Calendar source; normal task scheduling still edits only
+the task. Google Tasks remains date-only.
 
 ** Showing images in the document
 
