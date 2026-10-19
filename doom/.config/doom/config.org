@@ -47,6 +47,28 @@ with =:localleader= reads the value at load time.
 (setq doom-localleader-key ",")
 #+end_src
 
+** Touchpad scrolling
+
+Ctrl + scroll does nothing, including Ctrl + Meta + scroll. Accidental zooming
+can trigger an Emacs display loop that exhausts memory. Normal scrolling and
+Shift + scroll stay unchanged; keyboard font-size commands still work.
+
+#+begin_src emacs-lisp
+(defun my/disable-control-scroll-zoom ()
+  "Disable mouse-wheel zoom without changing ordinary scrolling."
+  (setq mouse-wheel-scroll-amount
+        (seq-remove (lambda (entry)
+                      (and (consp entry)
+                           (memq (cdr entry) '(text-scale global-text-scale))))
+                    mouse-wheel-scroll-amount))
+  ;; Changing the scroll settings alone leaves existing zoom bindings installed.
+  (dolist (key '("C-<wheel-up>" "C-<wheel-down>" "C-<mouse-4>" "C-<mouse-5>"
+                 "C-M-<wheel-up>" "C-M-<wheel-down>" "C-M-<mouse-4>" "C-M-<mouse-5>"))
+    (global-set-key (kbd key) #'ignore)))
+
+(after! mwheel (my/disable-control-scroll-zoom))
+#+end_src
+
 ** Theme
 
 Everforest everywhere: here, in Ghostty, and in opencode. Doom's theme pack has
