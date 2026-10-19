@@ -12,6 +12,8 @@
 (load (expand-file-name "org-calendar-config.el"
                         (file-name-directory (or load-file-name buffer-file-name))) nil t)
 
+(declare-function my/org-background-buffer "org-calendar-config" (file))
+(declare-function my/org-background-release "org-calendar-config" (file))
 (declare-function org-gcal--event-id-from-entry-id "org-gcal" (entry-id))
 (declare-function org-gcal--format-entry-id "org-gcal" (calendar-id event-id))
 (declare-function parse-iso8601-time-string "parse-time" (date))
@@ -64,7 +66,7 @@
   (unless (and (equal my/org-calendar-auto--calendar my/org-calendar-id)
                (my/org-calendar-configured-id-p my/org-calendar-auto--calendar))
     (user-error "Calendar mapping changed; disable automation and review it first"))
-  (find-file-noselect my/org-calendar-auto--file))
+  (my/org-background-buffer my/org-calendar-auto--file))
 
 (defun my/org-calendar-auto--save ()
   "Save sync metadata without triggering another after-save cycle."
@@ -632,6 +634,7 @@ Keep the old identity and conflict snapshot for local recovery history."
   (my/org-calendar-auto--status (if (and my/org-calendar-auto--rerun (equal status "up to date")) "pending" status))
   (when (member status '("up to date" "needs attention"))
     (my/org-calendar-auto--refresh-agendas))
+  (when my/org-calendar-auto--file (my/org-background-release my/org-calendar-auto--file))
   (when my/org-calendar-auto--rerun
     (setq my/org-calendar-auto--rerun nil)
     (my/org-calendar-auto--schedule)))

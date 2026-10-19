@@ -8,6 +8,8 @@
 (require 'button)
 (load (expand-file-name "org-tasks-access.el" (file-name-directory (or load-file-name buffer-file-name))) nil t)
 (declare-function my/org-file "config" (name))
+(declare-function my/org-background-buffer "org-calendar-config" (file))
+(declare-function my/org-background-release "org-calendar-config" (file))
 (declare-function my/org-calendar-status-icon "org-calendar-status" (spec))
 (declare-function my/org-calendar-auto--refresh-agendas "org-calendar-auto" ())
 (declare-function my/org-calendar-view-refresh-visible "org-calendar-view" (&rest args))
@@ -66,7 +68,7 @@
 (defun my/org-tasks--buffer ()
   "Return only the pinned Personal task buffer, with external changes guarded."
   (my/org-tasks--check-scope)
-  (let ((buffer (or (get-file-buffer my/org-tasks--file) (find-file-noselect my/org-tasks--file))))
+  (let ((buffer (my/org-background-buffer my/org-tasks--file)))
     (with-current-buffer buffer
       (unless (verify-visited-file-modtime buffer)
         (user-error "personal.org changed on disk; review or revert it before syncing")))
@@ -589,6 +591,7 @@
     (let ((my/org-tasks--refreshing t))
       (when (fboundp 'my/org-calendar-auto--refresh-agendas) (my/org-calendar-auto--refresh-agendas))
       (when (fboundp 'my/org-calendar-view-refresh-visible) (my/org-calendar-view-refresh-visible))))
+  (when my/org-tasks--file (my/org-background-release my/org-tasks--file))
   (when my/org-tasks--rerun (setq my/org-tasks--rerun nil) (my/org-tasks--schedule)))
 
 (defun my/org-tasks--start ()
