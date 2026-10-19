@@ -3320,6 +3320,154 @@ meant to be pressed directly. =C-z= returns to evil.
     (+popup-display-buffer-stacked-side-window-fn buffer alist)))
 #+end_src
 
+** Skills and file completion
+
+=, i= or =C-c i= opens a skill picker while composing a prompt. Search by
+name or description: =legal= finds the legal ISO variant. The preview shows the
+full description. Selecting a skill inserts an explicit request at point;
+it does not send the prompt. =C-g= leaves the prompt unchanged.
+Names and descriptions appear in aligned, theme-coloured columns. Long
+descriptions are shortened only for display; their full text stays searchable.
+Skills stay in alphabetical order, rather than moving around with usage history.
+
+=@= completes project files inside a project. Outside a project, it browses the
+session directory instead, including empty files and folders. Choose a folder
+to continue into it. Ordinary filename completion without =@= is unchanged.
+
+#+begin_src emacs-lisp
+(defvar my/agent-shell-skill-history nil
+  "Previous selections in the agent skill picker.")
+
+(defface my/agent-shell-skill-name
+  '((t :inherit font-lock-function-name-face :weight semi-bold))
+  "Skill names in the agent skill picker.")
+
+(defface my/agent-shell-skill-description
+  '((t :inherit font-lock-doc-face))
+  "Descriptions in the agent skill picker.")
+
+(defun my/agent-shell-skill-candidates (shell)
+  "Return searchable (LABEL . ID) skill rows advertised by SHELL."
+  (delq nil
+        (mapcar
+         (lambda (command)
+           (let ((description (map-elt command 'description))
+                 (id (map-elt command 'name)))
+             (when (and (stringp id) (stringp description)
+                        (string-prefix-p "[skill] " description))
+               (cons (concat id "  "
+                             (replace-regexp-in-string
+                              "[[:space:]]+" " " (substring description 8)))
+                     id))))
+         (map-elt (buffer-local-value 'agent-shell--state shell)
+                  :available-commands))))
+
+(defun my/agent-shell-skill-columns (rows width candidate)
+  "Format CANDIDATE from ROWS as name and description columns of WIDTH."
+  (let* ((id (cdr (assoc candidate rows)))
+         (description (substring candidate (+ (length id) 2)))
+         (available (max 20 (- (window-body-width
+                               (or (active-minibuffer-window) (selected-window)))
+                              width 6))))
+    (list (propertize (concat id (make-string (- width (string-width id)) ?\s))
+                      'face 'my/agent-shell-skill-name)
+          ""
+          (concat (propertize "  │  " 'face 'font-lock-comment-face)
+                  (propertize (truncate-string-to-width description available nil nil "…")
+                              'face 'my/agent-shell-skill-description)))))
+
+(defun my/agent-shell-read-skill (rows)
+  "Choose from ROWS by name or description, previewing the full description."
+  (require 'consult)
+  (setq rows (sort (copy-sequence rows)
+                   (lambda (a b) (string-lessp (cdr a) (cdr b)))))
+  (let ((preview (generate-new-buffer " *Agent skill description*"))
+        (width (apply #'max (mapcar (lambda (row) (string-width (cdr row))) rows))))
+    (unwind-protect
+        (save-window-excursion
+          (consult--read
+           (mapcar #'car rows) :prompt "Insert skill: " :require-match t
+           :sort nil
+           :category 'agent-skill :history 'my/agent-shell-skill-history
+           :annotate (apply-partially #'my/agent-shell-skill-columns rows width)
+           :preview-key 'any
+           :lookup (lambda (selected &rest _) (cdr (assoc selected rows)))
+           :state
+           (lambda (action id)
+             (when (and (eq action 'preview) id)
+               (let ((label (car (rassoc id rows))))
+                 (with-current-buffer preview
+                   (let ((inhibit-read-only t))
+                     (erase-buffer)
+                     (insert id "\n\n" (substring label (+ (length id) 2))))
+                   (special-mode)
+                   (setq-local truncate-lines nil)
+                   (visual-line-mode 1))
+                 (display-buffer preview
+                                 '((display-buffer-in-side-window)
+                                   (side . right) (window-width . 0.4))))))))
+      (kill-buffer preview))))
+
+(defun my/agent-shell-insert-skill ()
+  "Pick an advertised skill and insert its name into the current prompt."
+  (interactive)
+  (require 'agent-shell)
+  (let ((shell (if (derived-mode-p 'agent-shell-viewport-edit-mode)
+                   (agent-shell--shell-buffer :no-error t :no-create t)
+                 (agent-shell-completion--source-buffer))))
+    (unless (and shell
+                 (or (derived-mode-p 'agent-shell-viewport-edit-mode)
+                     (and (minibufferp) agent-shell-completion--shell-buffer)
+                     (and (derived-mode-p 'agent-shell-mode)
+                          comint-last-prompt
+                          (agent-shell--live-input-prompt-p comint-last-prompt)
+                          (>= (point) (cdr comint-last-prompt)))))
+      (user-error "Place the cursor in an agent prompt first"))
+    (let ((rows (my/agent-shell-skill-candidates shell)))
+      (unless rows
+        (user-error "This agent has not advertised any skills"))
+      (let ((id (my/agent-shell-read-skill rows)))
+        ;; Natural language works mid-sentence without treating skills as files.
+        (insert "the `" id "` skill ")))))
+
+(defun my/agent-shell-file-completion (orig)
+  "Add directory fallback and immediate Corfu suggestions to ORIG's file CAPF."
+  (when-let* ((result (funcall orig))
+              (source (agent-shell-completion--source-buffer)))
+    (let* ((start (car result))
+           (directory (with-current-buffer source
+                        (file-name-as-directory (agent-shell-cwd))))
+           (properties (nthcdr 3 result)))
+      (when (and (null (nth 2 result))
+                 (with-current-buffer source (not (project-current nil))))
+        ;; Browse one directory at a time, rather than scanning an arbitrary tree.
+        (setcar (nthcdr 2 result)
+                (lambda (string predicate action)
+                  (let ((default-directory directory))
+                    (completion-file-name-table string predicate action)))))
+      (setq properties (plist-put properties :company-prefix-length t))
+      (setq properties
+            (plist-put
+             properties :exit-function
+             (lambda (candidate status)
+               ;; Old agent-shell versions also call their exit function while
+               ;; Corfu is still previewing. Only rewrite a committed filename.
+               (when (and (eq status 'finished)
+                          (not (string-suffix-p "/" candidate)))
+                 ;; File tables complete only the basename after a directory
+                 ;; boundary. Read the whole path back before quoting it.
+                 (when (eq (char-before start) ?@)
+                   (let ((path (buffer-substring-no-properties start (point))))
+                     (delete-region (1- start) (point))
+                     (insert (agent-shell--file-mention path) " ")))))))
+      (setcdr (nthcdr 2 result) properties)
+      result)))
+
+(defun my/agent-shell-skill-minibuffer-key (_event)
+  "Offer the skill picker while composing a queued agent prompt."
+  (local-set-key (kbd "C-c i") #'my/agent-shell-insert-skill))
+#+end_src
+
 ** The package
 
 Bindings first, then the settings. The tables above describe what these keys do.
@@ -3366,6 +3514,17 @@ keeps a resume quick.
   (setq agent-shell-preferred-agent-config 'claude-code
         agent-shell-session-restore-verbosity 'last)
 
+  (advice-add 'agent-shell--file-completion-at-point :around
+              #'my/agent-shell-file-completion)
+  (add-hook 'agent-shell-prompt-queue-setup-minibuffer-functions
+            #'my/agent-shell-skill-minibuffer-key)
+  (define-key agent-shell-mode-map (kbd "C-c i") #'my/agent-shell-insert-skill)
+  (after! agent-shell-viewport
+    (define-key agent-shell-viewport-edit-mode-map (kbd "C-c i")
+                #'my/agent-shell-insert-skill)
+    (map! :map agent-shell-viewport-edit-mode-map :localleader
+          :desc "insert skill" "i" #'my/agent-shell-insert-skill))
+
   (advice-add 'agent-shell--session-title :override
               #'my/agent-shell-session-title)
 
@@ -3398,6 +3557,7 @@ mode list and cannot be chosen by mistake.
 
   (map! :map agent-shell-mode-map
         :localleader
+        :desc "insert skill"        "i" #'my/agent-shell-insert-skill
         :desc "session mode"        "m" #'agent-shell-set-session-mode
         :desc "model"               "v" #'agent-shell-set-session-model
         :desc "thought level"       "t" #'agent-shell-set-session-thought-level
