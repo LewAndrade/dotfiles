@@ -19,6 +19,16 @@ Use fd instead of find.
 
 Don't use em/en dashes like "—" on texts.
 
+### Clickable file links in Emacs
+
+I use Emacs with agent-shell. Whenever you deliver a requested file or point me to a file I should read, provide a clickable Markdown link, not just a plain path or inline code.
+
+- Use the real absolute local path as the link destination and a descriptive name or repository-relative path as the label: `[docs/BRLForcedPayout.md](/Users/lew.andrade/Dev/balance-interest-bacc-669/docs/BRLForcedPayout.md)`.
+- Link to the actual checkout or worktree containing the file, including files outside the current repository.
+- When referring to specific lines, use `#L42` or `#L42-L57` on the destination.
+- For paths with spaces or parentheses, use an angle-bracketed destination: `[My notes](</absolute/path/My notes.md>)`.
+- Keep links outside inline code and fenced code blocks so agent-shell can make them clickable. Preserve literal paths inside commands and copy-paste examples.
+
 ### Writing style
 
 Use natural, plain English by default for chat answers and requested writing, including Slack messages, tickets, PR descriptions, and docs. Lead with the answer, then the detail. Prefer familiar words, explain unfamiliar terms when needed, and drop density and filler. This preference does not activate a writing-style skill.
