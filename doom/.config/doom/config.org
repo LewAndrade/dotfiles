@@ -2126,14 +2126,19 @@ sees, and the resume picker groups by that root.
 |-----------+------------------------------------+-----------------------------------------------------|
 | =SPC l l= | =agent-shell=                      | Default. Reuse the shell for here, or start one     |
 | =SPC l a= | =my/agent-shell-dev=               | Everyday choice. New shell at =~/Dev=, flat list    |
-| =SPC l A= | =agent-shell-new-shell=            | The work is one project, and the root must match it |
+| =SPC l A= | =my/agent-shell-claude-repository=  | Choose a directory, then a Claude session          |
 | =SPC l d= | =my/agent-shell-in-dir=            | The root is somewhere else entirely                 |
 | =SPC l o= | =my/agent-shell-opencode-dev=      | Same as =SPC l a=, but GPT through OpenCode         |
-| =SPC l O= | =agent-shell-opencode-start-agent= | Same as =SPC l A=, but GPT through OpenCode         |
+| =SPC l O= | =my/agent-shell-opencode-repository= | Choose a directory, then an OpenCode session      |
 | =SPC l m= | =my/agent-shell-select-agent=      | Any of the other seventeen agents                   |
 
-Lowercase starts at =~/Dev=, uppercase starts where you are: =a= / =A= for Claude,
-=o= / =O= for OpenCode. =SPC l w= for worktree shells is gone, unused.
+Lowercase shows sessions throughout =~/Dev=, including subrepositories and
+worktrees. Uppercase asks you to choose a directory first: =a= / =A= for Claude,
+=o= / =O= for OpenCode. The picker includes known Git projects and repositories
+directly under =~/Dev=. Choose =Browse...= for any existing directory, including
+temporary folders without Git. Browsing keeps the exact directory you select,
+even inside a repository, because sessions can belong to that subdirectory.
+=SPC l w= for worktree shells is gone, unused.
 
 *** Shells that are open
 
@@ -2191,8 +2196,11 @@ two views of one session. It does not cycle between sessions.
 
 ** Entry points
 
-=~/Dev= is the default root on purpose. The resume picker groups sessions by
-their root, so one shared root keeps every session in a single flat list.
+=~/Dev= is the default root on purpose. Both agent pickers include sessions
+in =~/Dev= and its subdirectories, including worktrees. Moving a session into
+a worktree therefore keeps it in the =SPC l a= or =SPC l o= list. Resuming uses
+the session's stored directory, not the picker's =~/Dev= directory. A directory
+chosen through =SPC l A= or =SPC l O= keeps its own directory-scoped session list.
 
 The Claude commands pass a prefix argument, which forces a new shell instead of a
 switch to an existing one. The OpenCode entry point needs no equivalent, because
@@ -2213,6 +2221,66 @@ switch to an existing one. The OpenCode entry point needs no equivalent, because
   (let ((default-directory (expand-file-name "~/Dev/")))
     (agent-shell-opencode-start-agent)))
 
+(defun my/agent-shell-claude-repository (directory)
+  "Open a Claude session picker in the chosen DIRECTORY, with or without Git."
+  (interactive (list (my/agent-shell-read-repository)))
+  (require 'agent-shell)
+  (my/agent-shell-start-in-directory directory #'agent-shell-anthropic-start-claude-code))
+
+(defun my/agent-shell-opencode-repository (directory)
+  "Open an OpenCode session picker in the chosen DIRECTORY, with or without Git."
+  (interactive (list (my/agent-shell-read-repository)))
+  (require 'agent-shell)
+  (my/agent-shell-start-in-directory directory #'agent-shell-opencode-start-agent))
+
+(defun my/agent-shell-start-in-directory (directory start)
+  "Call START in DIRECTORY and keep project detection from replacing it."
+  (let* ((default-directory (file-name-as-directory (expand-file-name directory)))
+         (agent-shell-cwd-function (lambda () default-directory))
+         (buffer (funcall start)))
+    (with-current-buffer buffer
+      (setq-local agent-shell-cwd-function (lambda () default-directory)))
+    buffer))
+
+(defvar my/agent-shell-repository-history nil
+  "Previously selected directory choices for agent shells.")
+
+(defun my/agent-shell-read-repository ()
+  "Choose a known repository or browse to any existing session directory."
+  (require 'projectile)
+  (let* ((repositories (my/agent-shell-repository-candidates))
+         (current (ignore-errors (projectile-project-root)))
+         (default (and current (abbreviate-file-name current)))
+         (choice (completing-read
+                  "Agent directory: " (append repositories '("Browse..."))
+                  nil t nil 'my/agent-shell-repository-history
+                  (and (member default repositories) default)))
+         (directory (if (equal choice "Browse...")
+                         (read-directory-name "Session directory: " "~/Dev/" nil t)
+                       choice)))
+    (unless (file-directory-p directory)
+      (user-error "Choose an existing directory"))
+    (file-name-as-directory (expand-file-name directory))))
+
+(defun my/agent-shell-repository-candidates ()
+  "Return existing Git repositories from Dev and Projectile, without duplicates."
+  (let* ((dev (expand-file-name "~/Dev/"))
+         (directories (append
+                       (when (file-directory-p dev)
+                         (directory-files dev t directory-files-no-dot-files-regexp))
+                       (bound-and-true-p projectile-known-projects)))
+         (repositories
+          (seq-filter (lambda (directory)
+                        (and (file-directory-p directory)
+                             (file-exists-p (expand-file-name ".git" directory))))
+                      directories)))
+    ;; file-equal-p also collapses ~/dev and ~/Dev on case-insensitive filesystems.
+    (sort (mapcar (lambda (directory)
+                    (abbreviate-file-name
+                     (file-name-as-directory (expand-file-name directory))))
+                  (seq-uniq repositories #'file-equal-p))
+          #'string-lessp)))
+
 (defun my/agent-shell-in-dir (dir)
   "Start an agent shell in DIR."
   (interactive "DAgent shell in directory: ")
@@ -2225,6 +2293,70 @@ switch to an existing one. The OpenCode entry point needs no equivalent, because
   (interactive)
   (require 'agent-shell)
   (agent-shell-start :config (agent-shell-select-config :prompt "Agent")))
+#+end_src
+
+Both adapters filter =session/list= by directory. For the Dev picker, omit
+that filter and filter each returned page to the Dev directory tree instead.
+Keep pagination cursors even when a page has no Dev sessions, so older sessions
+remain reachable. Empty =New session= entries are separate unused sessions;
+they are not placeholders for conversations moved into worktrees.
+
+#+begin_src emacs-lisp
+(defun my/agent-shell--dev-list-request (orig &rest args)
+  "List Claude and OpenCode sessions throughout Dev, preserving pagination."
+  (let* ((state (plist-get args :state))
+         (request (plist-get args :request))
+         (cwd (map-nested-elt request '(:params cwd))))
+    (if (not (and (equal (map-elt request :method) "session/list")
+                  (my/agent-shell--dev-picker-p state cwd)))
+        (apply orig args)
+      (let ((request (copy-tree request))
+            (on-success (plist-get args :on-success)))
+        ;; ACP allows cwd to be omitted, but acp.el's constructor requires it.
+        ;; Change the outgoing request rather than the shared constructor.
+        (map-put! request :params
+                  (or (assq-delete-all 'cwd (map-elt request :params))
+                      (make-hash-table)))
+        (setq args (plist-put args :request request))
+        (setq args
+              (plist-put
+               args :on-success
+               (lambda (response)
+                 (let ((response (copy-tree response)))
+                   (map-put! response 'sessions
+                             (vconcat
+                              (seq-filter
+                               (lambda (session)
+                                 (my/agent-shell--directory-in-dev-p
+                                  (map-elt session 'cwd)))
+                               (map-elt response 'sessions))))
+                   (funcall on-success response)))))
+        (apply orig args)))))
+
+(defun my/agent-shell--dev-select-session (orig &rest args)
+  "Resume a selected Dev session in its stored directory."
+  (let ((dev-picker (my/agent-shell--dev-picker-p
+                     (agent-shell--state) (agent-shell-cwd)))
+        (choice (apply orig args)))
+    (when dev-picker
+      (when-let* ((cwd (and (listp choice) (map-elt choice 'cwd))))
+        (setq-local default-directory (file-name-as-directory cwd))
+        ;; Project root detection must not replace the selected worktree path.
+        (setq-local agent-shell-cwd-function (lambda () default-directory))))
+    choice))
+
+(defun my/agent-shell--dev-picker-p (state cwd)
+  "Return non-nil for a Claude or OpenCode shell listing the Dev root."
+  (and (memq (map-nested-elt state '(:agent-config :identifier)) '(opencode claude-code))
+       (stringp cwd)
+       (file-equal-p (expand-file-name cwd) (expand-file-name "~/Dev/"))))
+
+(defun my/agent-shell--directory-in-dev-p (directory)
+  "Return non-nil for DIRECTORY in Dev, excluding sibling directories."
+  (and (stringp directory)
+       (string-prefix-p (expand-file-name "~/Dev/")
+                        (file-name-as-directory (expand-file-name directory))
+                        (file-name-case-insensitive-p (expand-file-name "~/Dev/")))))
 #+end_src
 
 Claude is the preferred agent, which is why the picker never appears. That is
@@ -3492,6 +3624,32 @@ to continue into it. Ordinary filename completion without =@= is unchanged.
 
 ** The package
 
+#+begin_src emacs-lisp
+(defun my/agent-shell--opencode-skill-request (orig &rest args)
+  "Send OpenCode skill commands through ACP's normal prompt path."
+  (let* ((state (plist-get args :state))
+         (request (plist-get args :request)))
+    (when (and (eq (map-nested-elt state '(:agent-config :identifier)) 'opencode)
+               (equal (map-elt request :method) "session/prompt"))
+      (let* ((blocks (map-nested-elt request '(:params prompt)))
+             (block (seq-find (lambda (item) (equal (map-elt item 'type) "text")) blocks))
+             (text (and block (map-elt block 'text))))
+        (when (and (stringp text)
+                   (string-match "\\`/\\([[:alnum:]_-]+\\)\\(?:[[:space:]]\\|\\'\\)" text))
+          (let* ((id (match-string 1 text))
+                 (command (seq-find
+                           (lambda (item) (equal (map-elt item 'name) id))
+                           (map-elt state :available-commands))))
+            (when (string-prefix-p "[skill] " (or (map-elt command 'description) ""))
+              ;; Preserve the displayed prompt and all non-text attachments.
+              (setq request (copy-tree request t))
+              (let ((copy (seq-find (lambda (item) (equal (map-elt item 'type) "text"))
+                                    (map-nested-elt request '(:params prompt)))))
+                (map-put! copy 'text (concat "@skill:" id (substring text (1+ (length id))))))
+              (setq args (plist-put args :request request)))))))
+    (apply orig args)))
+#+end_src
+
 Bindings first, then the settings. The tables above describe what these keys do.
 
 #+begin_src emacs-lisp
@@ -3504,11 +3662,11 @@ Bindings first, then the settings. The tables above describe what these keys do.
          :desc "open shell, or reuse"     "l" #'agent-shell
          :desc "new in ~/Dev"             "a" #'my/agent-shell-dev
          :desc "new in directory…"        "d" #'my/agent-shell-in-dir
-         :desc "new in project"           "A" #'agent-shell-new-shell
+         :desc "Claude in directory..."   "A" #'my/agent-shell-claude-repository
          :desc "new with another agent"   "m" #'my/agent-shell-select-agent
 
          :desc "opencode in ~/Dev"        "o" #'my/agent-shell-opencode-dev
-         :desc "opencode in project"      "O" #'agent-shell-opencode-start-agent
+         :desc "OpenCode in directory..." "O" #'my/agent-shell-opencode-repository
 
          :desc "switch to a shell"        "b" #'agent-shell-switch-buffer
          :desc "shells, sidebar"          "h" #'agent-shell-hq-toggle
@@ -3549,6 +3707,13 @@ keeps a resume quick.
 
   (advice-add 'agent-shell--session-title :override
               #'my/agent-shell-session-title)
+
+  (advice-add 'agent-shell--send-request :around
+              #'my/agent-shell--dev-list-request)
+  (advice-add 'agent-shell--send-request :around
+              #'my/agent-shell--opencode-skill-request)
+  (advice-add 'agent-shell--prompt-select-session :around
+              #'my/agent-shell--dev-select-session)
 
   (advice-add 'agent-shell--apply-session-choices :filter-return
               #'my/agent-shell--capture-picker-choices)
