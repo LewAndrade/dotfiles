@@ -42,6 +42,10 @@ Use natural, plain English by default for chat answers and requested writing, in
 - Apply at most one writing-style skill per task, only when explicitly requested. Scope that selection to the requested task rather than subsequent unrelated chat answers or drafts. For an A/B comparison, apply each style separately to the same original text.
 - Preserve facts, uncertainty, technical tokens, and my requested destination format. My formatting instructions take priority over a skill's house style.
 
+### No blockquotes
+
+Never use `>` blockquotes in any output: chat answers, drafts, ticket or PR text, quotes from people or docs. In agent-shell they render as italic, barred text that is hard to read. Drafts I will paste elsewhere (Jira, Confluence, GitHub, Slack) go in a single fenced code block in the destination's markup. Quotes go inline in quotation marks.
+
 ### Copy-paste / Slack message format
 
 When drafting a Slack message (or any text I will copy-paste elsewhere), output it inside a single fenced code block using Slack's own markup, not chat markdown:
@@ -49,6 +53,7 @@ When drafting a Slack message (or any text I will copy-paste elsewhere), output 
 - Use `*single asterisks*` for bold, not `**double**`.
 - Use `` `inline code` `` and bullet char `•` as normal.
 - Do not wrap the draft in `>` blockquote markers.
+- Write links as `[text](url)`, not Slack API syntax `<url|text>`, which stays raw text when pasted.
 
 Reason: chat-markdown rendering (blockquote + `**bold**`) loses formatting when pasted into Slack. A fenced block with Slack markup pastes clean; Slack prompts to apply formatting on paste (or Cmd+Shift+F).
 
@@ -56,8 +61,3 @@ Reason: chat-markdown rendering (blockquote + `**bold**`) loses formatting when 
 
 - Never add `Co-Authored-By` or 🤖 / "Generated with Claude" footers to commits or PR bodies.
 - Keep PR descriptions concise. Do not paste the whole Jira ticket into the body; link the ticket and summarize.
-
-### Subagent models
-
-- When I ask for a "sonnet subagent" (or Sonnet 5.5), use `subagent_type: sonnet-worker` and do not set the `model` parameter. The `sonnet` model shortcut resolves to the older Sonnet 5 on this machine; `sonnet-worker` runs Sonnet 5.5.
-- When I ask for an "opus subagent", omit `model` (the session default is Opus 5.5) or set it to `opus`.
