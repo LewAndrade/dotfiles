@@ -12,7 +12,7 @@
 | Emacs      | =emacs-app= 30.2 on macOS, started maximized               |
 | Framework  | Doom. Modules live in =init.el=, everything else lives here |
 | Editing    | evil, with =SPC= as leader and =,= as localleader           |
-| Theme      | Everforest light, dark on =SPC t D=, see [[*Theme]]        |
+| Theme      | Everforest light, dark on =SPC t u=, see [[*Theme]]        |
 | Font       | Maple Mono NF, with Noto Emoji behind it for symbols       |
 | Completion | vertico in the minibuffer, corfu in the buffer             |
 | Languages  | Java and Kotlin first, through =lsp-mode= and jdtls        |
@@ -75,7 +75,7 @@ Everforest everywhere: here, in Ghostty, and in opencode. Doom's theme pack has
 no Everforest, so it comes from =doom-everforest-theme= in =packages.el=, which
 builds on the doom-themes framework and so styles vertico, corfu, lsp, vterm and
 the modeline for free. Light by default, because most of my day is in a bright
-room. =SPC t D= switches to dark, which is set up in [[*Theme toggle]].
+room. =SPC t u= switches to dark, which is set up in [[*Theme toggle]].
 
 The package never adds itself to =custom-theme-load-path=, so =load-theme= can't
 find it until its build directory is added here.
@@ -144,7 +144,7 @@ vanish on hover. In agent-shell buffers only, the hover takes =bg0= with normal
 text instead: the header's colors are the theme's own, made to be read on =bg0=,
 and =bg0= is clearly apart from the header in both modes. The mode line hover
 elsewhere keeps =mode-line-highlight=. A face rather than raw colors keeps the
-remap right across =SPC t D=.
+remap right across =SPC t u=.
 
 #+begin_src emacs-lisp
 (defface my/agent-shell-hover '((t :inherit highlight))
@@ -203,7 +203,7 @@ hooks the same =doom-customize-theme-hook= it uses, and runs on every theme load
 (defun my/everforest-palette-faces-h ()
   "Color magit diffs and markdown code from the shared Everforest palette.
 Only the theme just loaded, which leads `custom-enabled-themes': while
-`SPC t D' switches, the old theme is still enabled, and faces written to it
+`SPC t u' switches, the old theme is still enabled, and faces written to it
 then outlive its disabling and shadow the new theme's."
   (let ((theme (car custom-enabled-themes)))
     (when-let* (((memq theme '(doom-everforest doom-everforest-light)))
@@ -242,7 +242,7 @@ then outlive its disabling and shadow the new theme's."
              ((t :background ,(color "bg2") :extend t)))
            `(markdown-inline-code-face
              ((t :inherit markdown-code-face :foreground ,fg :extend nil)))
-           ;; Both themes set these, each its own way: `SPC t D' leaves the
+           ;; Both themes set these, each its own way: `SPC t u' leaves the
            ;; old theme enabled underneath, so a face only one theme set would
            ;; show through in the other.
            `(agent-shell-markdown-source-block
@@ -1943,11 +1943,11 @@ What is left is mine:
 | =SPC t m=          | =markdown-view-mode=                      | leader |
 | =SPC t t=          | Truncate long lines                     | leader |
 | =SPC t T=          | treemacs                                | leader |
-| =SPC t D=          | Dark theme                              | leader |
+| =SPC t u=          | Toggle light/dark theme                 | leader |
 
-=SPC t D= is uppercase because =SPC t d= is Doom's =diff-hl-mode=. =SPC t l= is
-gone for the same reason: it was Doom's own line number toggle, bound a second
-time.
+=SPC t u= keeps the theme toggle lowercase without replacing Doom's
+=SPC t d= for =diff-hl-mode=. =SPC t l= is not repeated here: Doom already
+provides the line number toggle.
 
 ** Errors
 
@@ -1991,6 +1991,7 @@ separate major modes.
     (markdown-view-mode)))
 
 (map! :leader
+      "t D" nil
       :desc "Comment line" "-" #'comment-line
 
       :desc "Highlight line here"      "t h" #'hl-line-mode
@@ -1998,7 +1999,7 @@ separate major modes.
       :desc "markdown-view-mode"       "t m" #'dt/toggle-markdown-view-mode
       :desc "Truncate lines"           "t t" #'toggle-truncate-lines
       :desc "Treemacs"                 "t T" #'+treemacs/toggle
-      :desc "Dark theme"               "t D" #'my/toggle-theme)
+      :desc "Toggle light/dark theme"  "t u" #'my/toggle-theme)
 #+end_src
 
 * Style
@@ -2060,7 +2061,7 @@ documents a visible outline.
 ** Theme toggle
 
 Everforest Light suits a bright room, and Everforest Dark suits a dark one.
-=SPC t D= switches between them.
+=SPC t u= switches between them.
 
 #+begin_src emacs-lisp
 (defvar my/light-theme 'doom-everforest-light)
@@ -2113,7 +2114,7 @@ shells that are open now, =agent-recall= for the ones that are over.
 4. Click the banner. Emacs comes forward and shows the shell that raised it.
 5. Review the diff. It opens beside the shell, and =y= or =n= answers it
    directly.
-6. =, N= names the session once it has enough content to describe, and renames
+6. =, n= names the session once it has enough content to describe, and renames
    the buffer with it. Skipping this is fine; =SPC l L= sweeps up anything left
    unnamed later.
 7. Days later, =SPC l /= searches the transcripts and =SPC l r= resumes one. It
@@ -2196,10 +2197,10 @@ from =comint-mode= and a new shell starts in insert state.
 | Group    | Keys                                                       |
 |----------+------------------------------------------------------------|
 | Session  | =, m= mode, =, v= model, =, t= thought level, =, s= option, =, c= cycle mode |
-| Running  | =, k= interrupt, =, o= shell or viewport, =, F= fork, =, r= reload, =, R= restart |
+| Running  | =, k= interrupt, =, o= shell or viewport, =, f= fork, =, r= reload, =, R= restart |
 | Queue    | =, q= add, =, Q= resume, =, d= remove                        |
 | Inspect  | =, T= transcript, =, y= session id, =, Y= copy as markdown, =, u= usage, =, g= ACP logs |
-| Other    | =, N= name this session, =, ?= help menu                     |
+| Other    | =, n= name this session, =, ?= help menu                     |
 
 =, o= is worth naming: it moves between the shell and its viewport, which are
 two views of one session. It does not cycle between sessions.
@@ -2569,12 +2570,11 @@ id, and every name on screen is a view of it: the shell buffer, its =[viewport]=
 twin, the hq sidebar, the start picker through the override above, and every
 agent-recall picker.
 
-Four keys generate it, differing only in which sessions they cover:
+Three entry points generate it, differing only in which sessions they cover:
 
 | Key                | Covers                          |
 |--------------------+---------------------------------|
-| =, N=              | The session you are in          |
-| =SPC l N=          | The same, from the leader        |
+| =, n=              | The session you are in          |
 | =SPC l h= then =r= | The session on the sidebar row   |
 | =SPC l L=          | Every unlabelled session         |
 | =C-u SPC l L=      | Every session, named ones too    |
@@ -3754,6 +3754,8 @@ mode list and cannot be chosen by mistake.
 
   (map! :map agent-shell-mode-map
         :localleader
+        "N" nil
+        "F" nil
         :desc "insert skill"        "i" #'my/agent-shell-insert-skill
         :desc "session mode"        "m" #'agent-shell-set-session-mode
         :desc "model"               "v" #'agent-shell-set-session-model
@@ -3762,7 +3764,7 @@ mode list and cannot be chosen by mistake.
         :desc "cycle session mode"  "c" #'agent-shell-cycle-session-mode
         :desc "interrupt"           "k" #'agent-shell-interrupt
         :desc "toggle shell / viewport" "o" #'agent-shell-other-buffer
-        :desc "fork conversation"   "F" #'agent-shell-fork
+        :desc "fork conversation"   "f" #'agent-shell-fork
         :desc "reload session"      "r" #'agent-shell-reload
         :desc "restart shell"       "R" #'agent-shell-restart
         :desc "queue prompt"        "q" #'agent-shell-prompt-queue
@@ -3773,7 +3775,7 @@ mode list and cannot be chosen by mistake.
         :desc "copy as markdown"    "Y" #'agent-shell-copy-as-markdown
         :desc "usage"               "u" #'agent-shell-show-usage
         :desc "acp logs"            "g" #'agent-shell-view-acp-logs
-        :desc "name this session"   "N" #'agent-shell-hq-label
+        :desc "name this session"   "n" #'agent-shell-hq-label
         :desc "help menu"           "?" #'agent-shell-help-menu)
 
   (add-hook 'agent-shell-diff-mode-hook #'evil-emacs-state)

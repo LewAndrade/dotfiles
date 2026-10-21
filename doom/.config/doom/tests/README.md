@@ -1,8 +1,23 @@
 # Org workflow checks
 
-Run these checks after changing capture, agenda layout, Calendar/Tasks helpers, or
-the notes-backup guard. They use disposable Org files, mocked calendar requests,
-and fake authorization data, not the live calendar or notes repository.
+Run these checks after changing capture, agenda layout, Calendar/Tasks helpers,
+keybindings, or the notes-backup guard. They use disposable Org files, mocked
+calendar requests, and fake authorization data, not the live calendar or notes
+repository.
+
+## Run the keybinding checks
+
+From `doom/.config/doom`:
+
+```sh
+emacs -Q --batch -l tests/keybindings-test.el -f ert-run-tests-batch-and-exit
+```
+
+These inspect the literate configuration without loading Doom. They check
+`SPC t u` for the theme toggle and agent-shell's `, n` for naming and `, f` for
+forking, removal of the uppercase aliases, and matching help text. Check the
+effective bindings in a running Doom session too; these tests do not load its
+keymaps.
 
 ## Run the calendar, Tasks, and agenda suite
 
