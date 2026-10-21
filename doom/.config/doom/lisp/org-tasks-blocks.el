@@ -250,8 +250,9 @@
     (message "Local task/block link saved; no task, event, or schedule was changed")))
 
 ;;;###autoload
-(defun my/org-tasks-block-unlink (&optional key)
-  "Restore separate displays without deleting, refiling, or changing Google."
+(defun my/org-tasks-block-unlink (&optional key expected-link)
+  "Restore separate displays without changing sources or Google.
+When supplied, EXPECTED-LINK must still match KEY under the cache lock."
   (interactive)
   (unless key
     (let ((marker (my/org-tasks-block--source-marker)))
@@ -260,16 +261,23 @@
     (let* ((links (my/org-tasks-block--read))
            (choices (mapcar (lambda (link) (cons (format "%s / %s" (plist-get link :key) (plist-get link :event-id)) link)) links)))
       (setq key (plist-get (cdr (assoc (completing-read "Unlink task/block: " choices nil t) choices)) :key))))
-  (my/org-tasks-block--change (lambda (links) (seq-remove (lambda (link) (equal key (plist-get link :key))) links)))
+  (my/org-tasks-block--change
+   (lambda (links)
+     (when (and expected-link
+                (not (equal expected-link (seq-find (lambda (link) (equal key (plist-get link :key))) links))))
+       (user-error "The link changed while choosing; reopen the picker"))
+     (seq-remove (lambda (link) (equal key (plist-get link :key))) links)))
   (my/org-tasks-block--refresh)
   (message "Local task/block link removed; both sources are unchanged"))
 
 ;;;###autoload
-(defun my/org-tasks-block-visit ()
-  "Visit the separate Calendar source behind a combined task row."
+(defun my/org-tasks-block-visit (&optional key)
+  "Visit KEY's Calendar source, or the current task row's block if KEY is nil."
   (interactive)
-  (let* ((marker (my/org-tasks-block--source-marker))
-         (pair (seq-find (lambda (item) (equal marker (plist-get (plist-get item :task) :marker)))
+  (let* ((marker (unless key (my/org-tasks-block--source-marker)))
+         (pair (seq-find (lambda (item)
+                           (if key (equal key (plist-get (plist-get item :link) :key))
+                             (equal marker (plist-get (plist-get item :task) :marker))))
                          (my/org-tasks-block--pairs)))
          (block (plist-get (plist-get pair :block) :marker)))
     (unless (and block (marker-buffer block)) (user-error "This task has no available linked block"))
@@ -325,7 +333,7 @@
                                          (list 'org-hd-marker marker 'org-marker (plist-get task :schedule-marker)
                                                'todo-state state
                                                'my/org-task-block (plist-get pair :link)
-                                               'help-echo "Task with a confirmed time block. RET visits the task; SPC n T b visits the block.") line)))
+                                               'help-echo "Task with a confirmed time block. RET visits the task; Integrations (SPC n i) offers Visit for the block.") line)))
                 (setq rendered (append rendered lines))))
             (append ordinary rendered))))))))
 
@@ -356,7 +364,7 @@
                               (or (plist-get pair :reason) (plist-get pair :stamp))))
               (insert-text-button "Unlink locally" 'follow-link t
                                   'action (lambda (_button) (my/org-tasks-block-unlink key))) (insert "\n")))
-          (insert "SPC n T l confirms a task/block pair; SPC n T u unlinks; SPC n T b visits its Calendar source.\n"
+          (insert "Integrations (SPC n i) offers Link, Unlink, and Visit for task/time-block pairs.\n"
                   "No title-based auto-merging. Unsupported or conflicting pairs remain separate.\n"))))))
 
 (define-minor-mode my/org-tasks-block-mode

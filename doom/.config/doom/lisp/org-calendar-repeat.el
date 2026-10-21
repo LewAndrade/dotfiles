@@ -398,7 +398,7 @@
   (if-let* ((event (my/org-calendar-repeat--selected)))
       (if (equal (completing-read "Edit: " '("This occurrence" "Entire series") nil t nil nil "This occurrence")
                  "Entire series")
-          (progn (org-agenda-switch-to) (message "Editing the series; save, then approve changes in SPC n g s"))
+          (progn (org-agenda-switch-to) (message "Editing the series; save, then approve in Integrations (SPC n i), Calendar Details"))
         (let ((base (copy-tree event)) (buffer (generate-new-buffer "*Recurring Occurrence Edit*")))
           (with-current-buffer buffer
             (insert "* " (or (plist-get event :summary) "busy") "\n")
@@ -435,7 +435,9 @@
        (org-map-entries
         (lambda ()
           (when (and (org-entry-get nil "GCAL_AUTO_RECURRING")
-                     (equal (org-entry-get nil "GCAL_AUTO_ERROR") "Series changes need approval in SPC n g s"))
+                     ;; Recognize approval messages saved before the shortcut cleanup too.
+                     (string-prefix-p "Series changes need approval"
+                                      (or (org-entry-get nil "GCAL_AUTO_ERROR") "")))
             (push (cons (org-get-heading t t t t) (point-marker)) approvals))) nil 'file)))
     (dolist (approval approvals)
       (let ((marker (cdr approval)))
@@ -455,7 +457,7 @@
              "Keep Org occurrence" (lambda (_)
                                      (let ((current (my/org-calendar-repeat--current-job id)))
                                        (unless (equal snapshot current)
-                                         (user-error "Occurrence changed; reopen SPC n g s before choosing"))
+                                         (user-error "Occurrence changed; reopen Calendar Details in Integrations (SPC n i) before choosing"))
                                        (my/org-calendar-repeat--replace-job (plist-put (copy-tree current) :resolution "org"))
                                        (my/org-calendar-auto--schedule)))
              (if (equal (plist-get (plist-get job :desired) :status) "cancelled")
@@ -466,7 +468,7 @@
                "Accept Google deletion" "Use Google occurrence")
            (lambda (_)
              (unless (equal snapshot (my/org-calendar-repeat--current-job id))
-               (user-error "Occurrence changed; reopen SPC n g s before choosing"))
+               (user-error "Occurrence changed; reopen Calendar Details in Integrations (SPC n i) before choosing"))
              (my/org-calendar-repeat--drop-job id)
              (my/org-calendar-auto--schedule))
            "Discard this occurrence's pending Org edit and use Google; leave the series unchanged."))))))

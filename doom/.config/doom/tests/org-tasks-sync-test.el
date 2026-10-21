@@ -455,6 +455,13 @@
     (make-symbolic-link my/org-tasks--file (my/org-file "work.org"))
     (should-error (my/org-tasks--check-scope) :type 'user-error)))
 
+(ert-deftest my/tasks-sync-work-symlink-is-blocked-even-if-file-equal-p-misses-it ()
+  (my/tasks-test-workspace
+    (delete-file (my/org-file "work.org"))
+    (make-symbolic-link my/org-tasks--file (my/org-file "work.org"))
+    (cl-letf (((symbol-function 'file-equal-p) (lambda (&rest _) nil)))
+      (should-error (my/org-tasks--check-scope) :type 'user-error))))
+
 (ert-deftest my/tasks-sync-initial-org-completions-still-belong-to-all-personal-scope ()
   (my/tasks-test-workspace
     (my/tasks-test-add "** DONE Personal completion\nPrivate history\n") (my/org-tasks--start)

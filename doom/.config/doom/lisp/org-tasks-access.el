@@ -52,14 +52,14 @@
       (when my/org-tasks-access-error (insert my/org-tasks-access-error "\n"))
       (insert "\nCalendar has a separate token. This setup page only inspects lists.\n"
               (if (bound-and-true-p my/org-tasks-mode)
-                  "Automatic task sync is enabled separately; SPC n T s shows its status.\n\n"
+                  "Automatic task sync is enabled separately; SPC n i opens Integrations.\n\n"
                 "No automatic task sync is enabled.\n\n"))
       (dolist (list my/org-tasks-access-lists)
         (insert (format "%s: %s active, %s completed\n"
                         (or (plist-get list :title) "Untitled list")
                         (or (car (alist-get (plist-get list :id) my/org-tasks-access-counts nil nil #'equal)) "?")
                         (or (cdr (alist-get (plist-get list :id) my/org-tasks-access-counts nil nil #'equal)) "?"))))
-      (insert "\nRepeat setup: SPC n g m t. Cancel login: SPC n g m c.\n"))
+      (insert "\nIntegrations (SPC n i) offers Authorize Tasks and Cancel sign-in.\n"))
     (special-mode))
   (display-buffer "*Personal Tasks Setup*"))
 
@@ -78,7 +78,7 @@
                    (member "SERVICE_DISABLED" my/org-tasks-access-error-reasons)))
           "Enable Google Tasks API in the same Google Cloud project as Calendar, then repeat setup.")
          ((and (eq status 403) (member "ACCESS_TOKEN_SCOPE_INSUFFICIENT" my/org-tasks-access-error-reasons))
-          "Tasks permission was not granted. Repeat setup (SPC n g m t) and allow Google Tasks access.")
+          "Tasks permission was not granted. Use Authorize Tasks in Integrations (SPC n i) and allow Google Tasks access.")
          ((eq status 403) "Tasks permission is missing or access is denied; check consent and Google Tasks API activation.")
          (t "Tasks could not be reached. Calendar sync is unchanged; repeat setup later.")))
   (when (eq status 401) (setq my/org-tasks-access-token nil my/org-tasks-token-expiration nil))

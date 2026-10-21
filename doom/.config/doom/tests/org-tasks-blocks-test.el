@@ -98,6 +98,17 @@
       (should (= #o600 (logand (file-modes (my/org-tasks-block--file)) #o777)))
       (should (equal (plist-get (car (my/org-tasks-block--read)) :key) key)))))
 
+(ert-deftest my/tasks-block-unlink-rechecks-the-dashboard-snapshot-under-the-cache-lock ()
+  (my/tasks-block-test-workspace
+    (let ((key (my/tasks-block-test-seed)))
+      (my/org-tasks-block--link key "block-1")
+      (let ((snapshot (copy-tree (car (my/org-tasks-block--read)))))
+        (my/org-tasks-block--change
+         (lambda (links) (list (plist-put (copy-tree (car links)) :event-id "replacement-block"))))
+        (should-error (my/org-tasks-block-unlink key snapshot) :type 'user-error)
+        (should (equal (plist-get (car (my/org-tasks-block--read)) :event-id) "replacement-block"))
+        (should-not (file-exists-p (concat (my/org-tasks-block--file) ".lock")))))))
+
 (ert-deftest my/tasks-block-done-and-cancelled-do-not-leave-an-unfinished-calendar-row ()
   (my/tasks-block-test-workspace
     (let ((key (my/tasks-block-test-seed)))

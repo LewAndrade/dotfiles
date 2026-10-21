@@ -35,6 +35,8 @@
 (defvar my/org-tasks--saving nil)
 (defvar my/org-tasks--refreshing nil)
 (defvar my/org-tasks--error nil)
+(defvar my/org-tasks--last-run nil)
+(defvar my/org-tasks--last-success nil)
 (defvar my/org-tasks--lock nil)
 (defvar my/org-tasks--locals nil)
 (defvar my/org-tasks--remote nil)
@@ -45,7 +47,7 @@
   "Show quiet STATUS, notifying once when review or login becomes necessary."
   (unless (equal status my/org-tasks-status)
     (when (member status '("needs attention" "needs login"))
-      (message "Personal tasks %s; SPC n T s shows details" status)))
+      (message "Personal tasks %s; SPC n i opens Integrations" status)))
   (setq my/org-tasks-status status)
   (force-mode-line-update t))
 
@@ -60,7 +62,9 @@
                (equal my/org-tasks--account my/org-tasks-account)
                (equal my/org-tasks--list my/org-tasks-list-id)
                (equal my/org-tasks--file (file-truename (my/org-file "personal.org")))
-               (not (seq-some (lambda (name) (file-equal-p my/org-tasks--file (my/org-file name)))
+               (not (seq-some (lambda (name)
+                                (or (equal my/org-tasks--file (file-truename (my/org-file name)))
+                                    (file-equal-p my/org-tasks--file (my/org-file name))))
                               '("work.org" "calendar-work.org" "calendar-personal.org")))
                (equal my/org-tasks--scope (my/org-tasks--scope-id)))
     (user-error "Tasks mapping changed; pause sync and review the private settings")))
@@ -338,10 +342,19 @@
 (defun my/org-tasks--issue (key text)
   (my/org-tasks--put key :issue text))
 
-(defun my/org-tasks--failure (status)
+(defun my/org-tasks--failure (status &optional data)
+  "Keep safe HTTP STATUS and permission reasons from DATA for an explicit retry."
   (when (eq status 401) (setq my/org-tasks-access-token nil my/org-tasks-token-expiration nil))
+  (when (eq status 403)
+    (setq my/org-tasks-access-error-reasons
+          (delq nil (mapcar (lambda (item) (plist-get item :reason))
+                           (append (plist-get (plist-get data :error) :errors)
+                                   (plist-get (plist-get data :error) :details))))))
   (setq my/org-tasks--error
-        (cond ((eq status 403) "Google Tasks access is denied; check setup with SPC n g m t")
+        (cond ((and (eq status 403)
+                    (member "ACCESS_TOKEN_SCOPE_INSUFFICIENT" my/org-tasks-access-error-reasons))
+               "Google Tasks permission was not granted. Open Integrations and authorize Tasks.")
+              ((eq status 403) "Google Tasks access is denied. Open Integrations and check Tasks authorization.")
               ((eq status 400) "Google rejected a task update; review its shared fields")
               (t "Tasks could not be reached; saved changes are kept and will retry automatically")))
   (my/org-tasks--finish (if (memq status '(400 403)) "needs attention" "pending")))
@@ -376,7 +389,7 @@
            (my/org-tasks--put key :creating nil) (my/org-tasks--store))
          (my/org-tasks--issue key "Creation reply was not confirmed. Check Google before linking or retrying this task")
          (my/org-tasks--store)
-         (my/org-tasks--failure status))))))
+         (my/org-tasks--failure status task))))))
 
 (defun my/org-tasks--update (key local payload task next)
   "PATCH only shared fields, guarding phone changes with the observed ETag."
@@ -386,7 +399,7 @@
      (cond ((eq status 200) (my/org-tasks--accept key local response next))
            ((eq status 412) (my/org-tasks--issue key "Google changed during sync; both versions were kept")
             (my/org-tasks--store) (funcall next))
-           (t (my/org-tasks--failure status))))))
+           (t (my/org-tasks--failure status response))))))
 
 (defun my/org-tasks--delete (key local task next)
   "Delete one reviewed Google task, never silently deleting a parent's subtasks."
@@ -395,7 +408,7 @@
       (progn (my/org-tasks--issue key "This task has Google subtasks; handle their deletion on your phone") (funcall next))
     (my/org-tasks--request
      "DELETE" (plist-get task :id) nil (plist-get task :etag)
-     (lambda (status _response)
+     (lambda (status response)
        (cond ((eq status 204)
               (my/org-tasks--put key :closed t)
               (my/org-tasks--put key :base '(:deleted t))
@@ -405,7 +418,7 @@
               (when local (my/org-tasks--apply key local '(:deleted t)))
               (funcall next))
              ((eq status 412) (my/org-tasks--issue key "Google changed; review deletion again") (funcall next))
-             (t (my/org-tasks--failure status)))))))
+             (t (my/org-tasks--failure status response)))))))
 
 (defun my/org-tasks--process (key local task next)
   "Reconcile one record without silently resolving conflicts or deletion scope."
@@ -500,7 +513,7 @@
            (lambda (status response)
              (cond ((eq status 200) (my/org-tasks--process key local response next))
                    ((memq status '(404 410)) (my/org-tasks--process key local (list :id id :deleted t) next))
-                   (t (my/org-tasks--failure status))))
+                   (t (my/org-tasks--failure status response))))
            `((fields . ,my/org-tasks--fields)))
         (my/org-tasks--process key local task next)))))
 
@@ -549,7 +562,7 @@
   (my/org-tasks--request
    "GET" nil nil nil
    (lambda (status data)
-     (if (not (eq status 200)) (my/org-tasks--failure status)
+     (if (not (eq status 200)) (my/org-tasks--failure status data)
        (let ((tasks (append collected (plist-get data :items))))
          (if-let* ((next (plist-get data :nextPageToken))) (my/org-tasks--list next tasks)
            (setq my/org-tasks--remote tasks)
@@ -586,6 +599,8 @@
 (defun my/org-tasks--finish (status)
   (my/org-tasks--unlock-cycle)
   (setq my/org-tasks--busy nil my/org-tasks--response nil)
+  (when (equal status "up to date")
+    (setq my/org-tasks--last-success (float-time)))
   (my/org-tasks--status status)
   (when (member status '("up to date" "needs attention"))
     (let ((my/org-tasks--refreshing t))
@@ -609,7 +624,8 @@
                  ;; Other Emacs instances may have advanced the shared private state.
                  (my/org-tasks--load-state)
                  (my/org-tasks--collect)
-                 (setq my/org-tasks--busy t my/org-tasks--error nil)
+                 (setq my/org-tasks--busy t my/org-tasks--error nil
+                       my/org-tasks--last-run (float-time))
                  (my/org-tasks--status "pending") (my/org-tasks--list))
              (user-error (setq my/org-tasks--error (error-message-string problem)) (my/org-tasks--finish "needs attention"))
              (error (setq my/org-tasks--error "Tasks sync could not start safely; no blind creation retries were made")
@@ -662,6 +678,8 @@
                            (equal my/org-tasks-account my/org-calendar-approved-primary-id)
                            (my/org-calendar-configured-id-p my/org-tasks-account))
                 (user-error "Approve an exact Personal account and Tasks list in private settings"))
+              (unless (equal my/org-tasks--scope (my/org-tasks--scope-id))
+                (setq my/org-tasks--last-run nil my/org-tasks--last-success nil))
               (setq my/org-tasks--account (copy-sequence my/org-tasks-account)
                     my/org-tasks--list (copy-sequence my/org-tasks-list-id)
                     my/org-tasks--file (file-truename (my/org-file "personal.org"))
@@ -781,7 +799,7 @@
                (t (my/org-tasks--button "Keep Org" key "org" version remote etag)
                   (my/org-tasks--button "Use Google" key "google" version remote etag)))
               (insert "\n\n"))))
-        (insert "Controls: SPC n T g sync now; SPC n T p pause/resume; SPC n g m t authorize.\n"
+        (insert "Integrations (SPC n i) offers sync, pause/resume, and authorization.\n"
                 "Deleting/refiling an Org heading alone never deletes Google.\n"
                 "Historical Google completions were left out; linked completions still sync.\n"))
       (special-mode))
@@ -822,7 +840,7 @@
                    (propertize "T" 'face 'shadow))))
       (propertize (concat " " icon " ") 'local-map my/org-tasks-status-map 'mouse-face 'mode-line-highlight
                   'help-echo (concat "Personal tasks: " status (when my/org-tasks--error (concat "\n" my/org-tasks--error))
-                                     "\nLeft-click: Tasks status (SPC n T s)\nRight-click: Tasks controls")))))
+                                     "\nSPC n i: Integrations\nLeft-click: Tasks details\nRight-click: Tasks controls")))))
 
 (add-to-list 'global-mode-string '(:eval (my/org-tasks-status-render)))
 (provide 'org-tasks-sync)

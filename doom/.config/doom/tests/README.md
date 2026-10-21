@@ -18,6 +18,7 @@ emacs -Q --batch \
   -l tests/org-calendar-repeat-test.el \
   -l tests/org-tasks-sync-test.el \
   -l tests/org-tasks-blocks-test.el \
+  -l tests/org-sync-ui-test.el \
   -f ert-run-tests-batch-and-exit
 ```
 
@@ -26,6 +27,11 @@ week, and status-icon tests. A successful run ends with `0 unexpected`.
 It checks primary-ID approval, Work/task isolation, conflict handling, recurring
 edit scope, read-only week data, compact Today versus full-width Review, zoom
 cleanup, and status visibility and mouse bindings.
+The shared UI checks named badges, separate click targets, selective hover help,
+display-only refresh, selected-integration actions, paused-sync guards, safe error
+reporting, and last-success timestamps. They also check Keychain controls,
+task/block pickers, changed-link protection, and removal of the old shortcut
+trees. They never use live accounts or files.
 The local task/block tests check explicit identity pairing, one timed task row,
 native state actions, completion/reopening, rescheduling, Review deduplication,
 deadlines, Work isolation, and separate displays for unsupported or conflicting
@@ -71,9 +77,9 @@ must pass before a Tasks token is stored or returned to Emacs. Calendar retains
 its own encrypted record. The setup command itself never imports or mutates tasks;
 automatic sync is enabled separately by the private account/list approval.
 If a consent screen granted only part of the requested access, repeat setup
-with `SPC n g m t`. After an insufficient-scope error, this explicitly requests
-new Tasks consent instead of reusing the partial token. It does not replace
-Calendar's token.
+with Authorize Tasks in Integrations (`SPC n i`). After an insufficient-scope
+error, this explicitly requests new Tasks consent instead of reusing the partial
+token. It does not replace Calendar's token.
 
 ## Tasks sync safeguards
 
@@ -95,8 +101,43 @@ Private `org-tasks.el` approves `my/org-tasks-account` and `my/org-tasks-list-id
 The per-scope JSON cache and encrypted token store belong beside it, outside Git.
 The first list read records historical completions to exclude from imports.
 Reopening one on the phone brings it into scope. Linked tasks continue syncing
-their completion and reopening normally. `SPC n T s` opens review; `SPC n T p`
-pauses/resumes; `SPC n T g` is a guarded manual request, disabled while paused.
+their completion and reopening normally. `SPC n i` opens Integrations with
+Calendar and Tasks controls. The separate Calendar and Tasks shortcut trees have
+been removed; the panel calls the same guarded functions.
+
+## Personal sync controls
+
+Click either named modeline badge or use `SPC n i` to open the shared panel.
+The badges appear together in relevant views and wherever a sync problem needs
+attention. Each badge has its own left-click target and right-click action menu.
+Hover shows a native tooltip for that integration; unrelated hover help stays
+disabled. Native hover placement still needs a manual check on your display.
+
+In the panel, use `c` for Calendar or `t` for Tasks, then `s` to sync, `a` to
+authorize, `p` to pause/resume, or `d` for the existing detailed review screen.
+Use `g` to refresh displayed information only and `q` to close the panel.
+Buttons provide the same actions. A paused integration has no Sync button,
+and the keyboard action refuses to bypass the pause.
+
+The Keychain section offers Set up / update and Forget unlock. Forget asks for
+confirmation and keeps encrypted tokens and Org files. The local time-block
+section offers Link, Visit, and Unlink with task pickers, so no agenda selection
+is required. Use `TAB` or `Shift-TAB` to select buttons and `RET` to activate one.
+View shortcuts (`SPC n d`, `SPC n r`, `SPC n v`) and agenda-local editing stay
+unchanged. In the panel's Evil Emacs state, use `M-SPC` for Doom's leader.
+
+Opening the panel, hovering, or opening an action menu never starts a sync,
+saves a source file, or starts Google sign-in. The panel updates when sync status
+changes without taking focus. Last-attempt and last-success times cover the
+current Emacs session; an unknown time is shown as not recorded, not inferred
+from the current healthy status. Authorization, private state, and conflict
+resolution remain separate for Calendar and Tasks.
+
+After loading or restarting Emacs, check `SPC n i`, both badge click targets,
+hover placement, and the panel's single-key actions. Batch tests do not prove
+native mouse behavior, GUI placement, or startup behavior in the full Doom UI.
+
+## Creation retries and cache locks
 
 An uncertain creation is journaled before POST and never automatically retried.
 Review offers linking a matching Google task or an explicitly confirmed retry
@@ -132,12 +173,14 @@ association from matching titles or hide all focus-time events.
 
 With both integrations configured, synced sources saved, and sync idle:
 
-1. Select the Personal task in Org or the agenda and use `SPC n T l`.
-2. Select its Calendar time block and confirm the exact pair and time.
+1. Open Integrations with `SPC n i` and choose Link under Local time-block links.
+2. Select the Personal task, then its Calendar time block, and confirm the exact
+   pair and time.
 3. Check Today/Review or the graphical week. The combined row uses the task's
-   state and the block's time. `RET` visits the task; `SPC n T b` visits the block.
+   state and the block's time. `RET` visits the task; Visit in Integrations offers
+   a task picker and opens its Calendar source.
 
-Use `SPC n T u` to restore separate displays. Pairing changes only a private
+Use Unlink in Integrations to restore separate displays. Pairing changes only a private
 `org-task-blocks-<scope>.json` file beside the Tasks cache, with mode `0600` and
 an atomic write protected by a scope-specific lock. It does not change Org
 planning, Google objects, or completion on the separate Calendar event.
@@ -151,9 +194,11 @@ task scheduling changes only the task. No companion Calendar events are created.
 
 One existing completed pair was enabled live after validating both exact IDs and
 the time range. Its separate event row was hidden and both source buffers remained
-unchanged. The link file's `0600` permissions and all three leader bindings were
-verified in the running Emacs. No Google writes were made for pairing.
+unchanged. The link file's `0600` permissions and the original three leader
+bindings were verified in the running Emacs before those controls moved into
+Integrations. No Google writes were made for pairing.
 
 Do not put credentials, calendar contents, or private sync caches into test
 fixtures. Do not call raw `org-gcal-sync` or `org-gcal-fetch` to verify sync;
-they bypass the custom safeguards. Use the guarded controls in `SPC n g`.
+they bypass the custom safeguards. Use the guarded controls in Integrations
+(`SPC n i`).

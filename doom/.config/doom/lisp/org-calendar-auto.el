@@ -36,18 +36,28 @@
 (defvar my/org-calendar-auto--saving nil)
 (defvar my/org-calendar-auto--refreshing nil)
 (defvar my/org-calendar-auto--last-run 0)
+(defvar my/org-calendar-auto--last-success nil)
 (defvar my/org-calendar-auto--attention nil)
 (defvar my/org-calendar-auto--last-error nil)
 (defvar my/org-calendar-auto--remote-table nil)
 (defvar my/org-calendar-auto--local-table nil)
+(defconst my/org-calendar-auto-series-approval-message
+  "Series changes need approval in Integrations (SPC n i), Calendar Details")
 
 (defun my/org-calendar-auto--status (status)
   "Set the quiet modeline STATUS, without repeated notifications."
   (let ((previous my/org-calendar-auto-status))
     (setq my/org-calendar-auto-status status)
     (when (and (equal status "needs attention") (not (equal previous status)))
-      (message "Personal calendar needs attention; SPC n g s shows details")))
+      (message "Personal calendar needs attention; SPC n i opens Integrations")))
   (force-mode-line-update t))
+
+(defun my/org-calendar-auto--record-error (problem stage)
+  "Keep a safe explanation of PROBLEM at STAGE, without logging response data."
+  (setq my/org-calendar-auto--last-error
+        (if (eq (car problem) 'user-error) (error-message-string problem)
+          (format "Calendar %s failed (%s). Local changes were kept; retry or open Details."
+                  stage (car problem)))))
 
 (defun my/org-calendar-auto--same-file-p (file)
   "Accept the exact configured path or a verified filesystem alias of FILE."
@@ -345,9 +355,10 @@
                            (when (plist-get data :error)
                              (setq my/org-calendar-auto--last-error
                                    (or (plist-get (plist-get data :error) :message) "Calendar API error")))
-                           (condition-case nil
+                           (condition-case problem
                                (funcall callback (request-response-status-code response) data)
-                             (error (my/org-calendar-auto--finish "needs attention")))))))))))
+                             (error (my/org-calendar-auto--record-error problem "response")
+                                    (my/org-calendar-auto--finish "needs attention")))))))))))
 
 (defun my/org-calendar-auto--failure (status)
   "End a failed cycle without losing queued local changes."
@@ -453,7 +464,7 @@ Keep the old identity and conflict snapshot for local recovery history."
   (if (not (my/org-calendar-auto--safe-marker marker))
       (progn (setq my/org-calendar-auto--rerun t) (funcall next))
     (org-with-point-at marker
-      (condition-case nil
+      (condition-case problem
           (let* ((local (my/org-calendar-auto--record))
                  (id (plist-get local :id))
                  (action (my/org-calendar-auto--plan local remote)))
@@ -480,7 +491,7 @@ Keep the old identity and conflict snapshot for local recovery history."
                (if (and (org-entry-get nil "GCAL_AUTO_RECURRING")
                         (not (equal (org-entry-get nil "GCAL_SERIES_APPROVED") (plist-get local :hash))))
                    (progn
-                     (org-entry-put nil "GCAL_AUTO_ERROR" "Series changes need approval in SPC n g s")
+                     (org-entry-put nil "GCAL_AUTO_ERROR" my/org-calendar-auto-series-approval-message)
                      (my/org-calendar-auto--save)
                      (setq my/org-calendar-auto--attention t)
                      (funcall next))
@@ -490,7 +501,8 @@ Keep the old identity and conflict snapshot for local recovery history."
                                    `((org . ,(plist-get local :payload)) (google . ,remote))))
                    (my/org-calendar-auto--save))
                  (my/org-calendar-auto--write local remote action next)))))
-        (error (setq my/org-calendar-auto--attention t) (funcall next))))))
+        (error (my/org-calendar-auto--record-error problem "reconciliation")
+               (setq my/org-calendar-auto--attention t) (funcall next))))))
 
 (defun my/org-calendar-auto--process-local (records)
   "Process RECORDS one at a time, checking linked events outside the window."
@@ -565,7 +577,7 @@ Keep the old identity and conflict snapshot for local recovery history."
      ((bound-and-true-p org-gcal--sync-lock)
       (my/org-calendar-auto--status "pending"))
      (t
-      (condition-case nil
+      (condition-case problem
           (let ((buffer (my/org-calendar-auto--buffer)) records)
             (if (buffer-modified-p buffer)
                 (my/org-calendar-auto--status "pending")
@@ -604,7 +616,8 @@ Keep the old identity and conflict snapshot for local recovery history."
               (setq my/org-calendar-auto--busy t my/org-calendar-auto--last-run (float-time))
               (my/org-calendar-auto--status "pending")
            (my/org-calendar-auto--list (nreverse records))))
-        (error (my/org-calendar-auto--finish "needs attention")))))))
+        (error (my/org-calendar-auto--record-error problem "startup")
+               (my/org-calendar-auto--finish "needs attention")))))))
 
 (defun my/org-calendar-auto--refresh-agendas ()
   "Refresh visible agendas without moving the selected source entry."
@@ -631,6 +644,8 @@ Keep the old identity and conflict snapshot for local recovery history."
 (defun my/org-calendar-auto--finish (status)
   "End a cycle with STATUS, refreshing the agenda only after confirmed work."
   (setq my/org-calendar-auto--busy nil my/org-calendar-auto--response nil)
+  (when (equal status "up to date")
+    (setq my/org-calendar-auto--last-success (float-time)))
   (my/org-calendar-auto--status (if (and my/org-calendar-auto--rerun (equal status "up to date")) "pending" status))
   (when (member status '("up to date" "needs attention"))
     (my/org-calendar-auto--refresh-agendas))
@@ -694,7 +709,7 @@ Keep the old identity and conflict snapshot for local recovery history."
                     (unless (and (equal expected-id (plist-get current :id))
                                  (equal expected-hash (plist-get current :hash))
                                  (equal expected-conflict (plist-get current :conflict)))
-                      (user-error "Event changed; reopen SPC n g s before choosing restoration"))
+                      (user-error "Event changed; reopen Calendar Details in Integrations (SPC n i) before choosing restoration"))
                     (when (or (equal (alist-get 'status (plist-get current :payload)) "cancelled")
                               (org-entry-get nil "GCAL_AUTO_SERIES"))
                       (user-error "Only active events or whole series can be recreated here"))
@@ -806,7 +821,9 @@ SCOPE explains whether choices affect one event, one occurrence, or a series."
        (org-map-entries
         (lambda ()
           (when-let* ((error-text (org-entry-get nil "GCAL_AUTO_ERROR")))
-            (push (concat (org-get-heading t t t t) ": " error-text) errors))
+            (push (concat (org-get-heading t t t t) ": "
+                          (if (string-prefix-p "Series changes need approval" error-text)
+                              my/org-calendar-auto-series-approval-message error-text)) errors))
           (when-let* ((remote (org-entry-get nil "GCAL_AUTO_CONFLICT")))
             (push (list (point-marker) (org-get-heading t t t t)
                         (my/org-calendar-auto--local-payload) (my/org-calendar-auto--decode remote)) conflicts)))
@@ -824,8 +841,8 @@ SCOPE explains whether choices affect one event, one occurrence, or a series."
             (insert "Saved events sync automatically. CANCELLED cancels on Google.\n"
                     (if my/org-calendar-keychain-enabled
                         "Keychain unlock is enabled; background refresh doesn't need a passphrase.\n"
-                      "SPC n g k remembers the unlock in Keychain; SPC n g l unlocks only this session.\n")
-                    "SPC n g m c cancels a pending login.\n\n")))
+                      "Integrations (SPC n i) offers Keychain setup or sign-in for this session.\n")
+                    "Use Cancel sign-in in Integrations to cancel a pending login.\n\n")))
         (when my/org-calendar-auto--last-error (insert my/org-calendar-auto--last-error "\n\n"))
         (dolist (error-text errors) (insert error-text "\n"))
         (when errors (insert "\n"))
@@ -872,7 +889,7 @@ SCOPE explains whether choices affect one event, one occurrence, or a series."
 
 (defun my/org-calendar-auto--manual-fetch (original &rest args)
   (if my/org-calendar-auto-mode
-      (progn (my/org-calendar-auto--schedule) (message "Calendar sync queued; SPC n g s shows status"))
+      (progn (my/org-calendar-auto--schedule) (message "Calendar sync queued; SPC n i opens Integrations"))
     (apply original args)))
 
 (defun my/org-calendar-auto--manual-publish (original &rest args)
@@ -906,6 +923,9 @@ SCOPE explains whether choices affect one event, one occurrence, or a series."
   (if my/org-calendar-auto-mode
       (progn
         (my/org-calendar-prepare)
+        (unless (and (equal my/org-calendar-auto--calendar my/org-calendar-id)
+                     (equal my/org-calendar-auto--file (my/org-file "calendar-personal.org")))
+          (setq my/org-calendar-auto--last-run 0 my/org-calendar-auto--last-success nil))
         (setq my/org-calendar-auto--calendar my/org-calendar-id
               my/org-calendar-auto--file (my/org-file "calendar-personal.org"))
         (add-hook 'after-save-hook #'my/org-calendar-auto--after-save)

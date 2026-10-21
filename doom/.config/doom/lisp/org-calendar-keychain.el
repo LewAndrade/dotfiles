@@ -26,7 +26,7 @@
 (defun my/org-calendar-keychain--process (operation passphrase callback)
   "Run native OPERATION asynchronously; send PASSPHRASE privately, then CALLBACK."
   (unless (and (eq system-type 'darwin) (file-executable-p my/org-calendar-keychain-helper-file))
-    (user-error "Calendar Keychain helper is missing; run SPC n g k to build it"))
+    (user-error "Calendar Keychain helper is missing; use Keychain setup in Integrations (SPC n i)"))
   (when (and my/org-calendar-keychain-process (process-live-p my/org-calendar-keychain-process))
     (user-error "A calendar Keychain operation is already running"))
   (let ((process
@@ -81,7 +81,7 @@
                        (message "Keychain helper build failed; see *Calendar Keychain Build*")
                      (set-file-modes output #o700)
                      (rename-file output my/org-calendar-keychain-helper-file t)
-                     (message "Keychain helper ready; run SPC n g k to finish setup")))))
+                     (message "Keychain helper ready; use Keychain setup in Integrations (SPC n i) to finish")))))
     (message "Building calendar Keychain helper in the background")))
 
 (defun my/org-calendar-keychain-enable ()
@@ -92,7 +92,7 @@
     (when (and my/org-calendar-keychain-process (process-live-p my/org-calendar-keychain-process))
       (user-error "A calendar Keychain operation is already running"))
     (when (and my/org-calendar-login-process (process-live-p my/org-calendar-login-process))
-      (user-error "Calendar login is already running; wait for it or cancel with SPC n g m c"))
+      (user-error "Calendar login is already running; wait or use Cancel sign-in in Integrations (SPC n i)"))
     ;; Let explicit setup prompt for the existing passphrase, even if an old item exists.
     (setq my/org-calendar-keychain-save-requested t)
     (condition-case failure

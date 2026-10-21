@@ -62,7 +62,7 @@
       (when (window-live-p window) (select-window window)))))
 
 (defun my/org-calendar-status-open (&optional event)
-  "Open the same status page as SPC n g s from a modeline EVENT."
+  "Open Calendar's detailed review page from a modeline EVENT."
   (interactive "e")
   (my/org-calendar-status--select-origin event)
   (my/org-calendar-auto-review))
@@ -120,7 +120,7 @@
            (tooltip (concat "Personal calendar: " (nth 4 spec)
                             (when my/org-calendar-auto--last-error
                               (concat "\n" my/org-calendar-auto--last-error))
-                            "\nLeft-click: Status (SPC n g s)\nRight-click: Calendar controls")))
+                            "\nSPC n i: Integrations\nLeft-click: Calendar details\nRight-click: Calendar controls")))
       (propertize (concat " " (my/org-calendar-status-icon spec) " ")
                   'help-echo tooltip 'mouse-face 'mode-line-highlight
                   'local-map my/org-calendar-status-map))))
