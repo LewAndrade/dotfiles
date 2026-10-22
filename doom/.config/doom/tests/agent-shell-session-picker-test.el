@@ -6,6 +6,7 @@
 (require 'map)
 (require 'seq)
 (require 'subr-x)
+(require 'json)
 
 ;; Filesystem mocks must not affect Emacs while it compiles mock trampolines.
 (setq native-comp-enable-subr-trampolines nil)
@@ -16,12 +17,138 @@
    (expand-file-name "../config.org" (file-name-directory load-file-name)))
   (goto-char (point-min))
   (while (re-search-forward
-          "^(defun my/agent-shell-\\(?:-dev-\\|-directory-in-dev-p\\|start-in-directory\\|.*repository\\)" nil t)
+          "^(defun my/agent-shell-\\(?:-dev-\\|-directory-in-dev-p\\|-opencode-\\(?:dev-root-sessions\\|root-session-ids\\)\\|start-in-directory\\|.*repository\\)" nil t)
     (goto-char (match-beginning 0))
     (eval (read (current-buffer)) t)))
 
 (defvar agent-shell-cwd-function nil)
 (defvar projectile-known-projects nil)
+(defvar my/agent-shell-opencode-executable "opencode")
+
+(ert-deftest my/opencode-dev-hides-children-and-keeps-session-data ()
+  (let* ((root '((sessionId . "root") (cwd . "/worktree") (title . "Root")))
+         (sessions (list root '((sessionId . "child"))))
+         (ids (make-hash-table :test #'equal))
+         received)
+    (puthash "root" t ids)
+    (cl-letf (((symbol-function 'my/agent-shell--opencode-root-session-ids)
+               (lambda (success _failure) (funcall success ids))))
+      (my/agent-shell--opencode-dev-root-sessions
+       (lambda (&rest args) (funcall (plist-get args :on-success) sessions))
+       :state '((:agent-config . ((:identifier . opencode))))
+       :cwd (expand-file-name "~/Dev/") :buffer (current-buffer)
+       :on-success (lambda (value) (setq received value))))
+    (should (equal received (list root)))
+    (should (eq (car received) root))
+    (should (= (length sessions) 2))))
+
+(ert-deftest my/opencode-dev-root-lookup-failure-keeps-all-sessions ()
+  (let ((sessions '(((sessionId . "root")) ((sessionId . "child")))))
+    (cl-letf (((symbol-function 'my/agent-shell--opencode-root-session-ids)
+               (lambda (_success failure) (funcall failure "offline"))))
+      (my/agent-shell--opencode-dev-root-sessions
+       (lambda (&rest args) (funcall (plist-get args :on-success) sessions))
+       :state '((:agent-config . ((:identifier . opencode))))
+       :cwd (expand-file-name "~/Dev/") :buffer (current-buffer)
+       :on-success (lambda (value) (should (eq value sessions)))))))
+
+(ert-deftest my/opencode-dev-root-filter-only-wraps-initial-dev-list ()
+  (dolist (case `((claude-code ,(expand-file-name "~/Dev/") nil)
+                 (opencode ,(expand-file-name "~/Dev/repo/") nil)
+                 (opencode ,(expand-file-name "~/Dev/") "page-2")))
+    (let ((callback #'ignore))
+      (my/agent-shell--opencode-dev-root-sessions
+       (lambda (&rest args) (should (eq (plist-get args :on-success) callback)))
+       :state `((:agent-config . ((:identifier . ,(car case)))))
+       :cwd (nth 1 case) :cursor (nth 2 case) :on-success callback))))
+
+(ert-deftest my/opencode-dev-empty-list-needs-no-root-lookup ()
+  (cl-letf (((symbol-function 'my/agent-shell--opencode-root-session-ids)
+             (lambda (&rest _) (ert-fail "Unexpected API lookup"))))
+    (my/agent-shell--opencode-dev-root-sessions
+     (lambda (&rest args) (funcall (plist-get args :on-success) nil))
+     :state '((:agent-config . ((:identifier . opencode))))
+     :cwd (expand-file-name "~/Dev/")
+     :on-success (lambda (value) (should-not value)))))
+
+(defun my/test-opencode-root-pages (pages &optional timeout)
+  "Exercise real process callbacks using fake API PAGES, not OpenCode."
+  (let ((original-make-process (symbol-function 'make-process))
+        (original-run-at-time (symbol-function 'run-at-time))
+        (original-buffers (buffer-list))
+        commands done result failure)
+    (cl-letf (((symbol-function 'make-process)
+               (lambda (&rest args)
+                 (push (plist-get args :command) commands)
+                 (let ((page (pop pages)))
+                   (apply original-make-process
+                          (plist-put
+                           args :command
+                           (list (executable-find "python3") "-c"
+                                 "import sys,time; time.sleep(float(sys.argv[3])); sys.stdout.write(sys.argv[1]); sys.exit(int(sys.argv[2]))"
+                                 (or (car page) "")
+                                 (number-to-string (or (nth 1 page) 0))
+                                 (if timeout "2" "0")))))))
+              ((symbol-function 'run-at-time)
+               (lambda (time repeat function &rest args)
+                 (apply original-run-at-time (if timeout 0.05 time) repeat function args))))
+      (my/agent-shell--opencode-root-session-ids
+       (lambda (ids) (setq result ids done t))
+       (lambda (reason) (setq failure reason done t)))
+      (let ((deadline (+ (float-time) 5)))
+        (while (and (not done) (< (float-time) deadline))
+          (accept-process-output nil 0.05)))
+      (should done)
+      (should-not pages)
+      (should-not
+       (seq-find (lambda (buffer)
+                   (and (not (memq buffer original-buffers))
+                        (string-prefix-p " *opencode-root-sessions" (buffer-name buffer))))
+                 (buffer-list))))
+    (list result failure (nreverse commands))))
+
+(ert-deftest my/opencode-root-api-follows-empty-pages-and-cursors ()
+  (pcase-let ((`(,ids ,failure ,commands)
+               (my/test-opencode-root-pages
+                '(("{\"data\":[{\"id\":\"root-1\"}],\"cursor\":{\"next\":\"page-2\"}}")
+                  ("{\"data\":[],\"cursor\":{\"next\":\"page-3\"}}")
+                  ("{\"data\":[{\"id\":\"root-2\"}],\"cursor\":{\"next\":null}}")))))
+    (should-not failure)
+    (should (= (hash-table-count ids) 2))
+    (should (gethash "root-1" ids))
+    (should (gethash "root-2" ids))
+    (should (member "parentID=null" (car commands)))
+    (should (member "cursor=page-2" (nth 1 commands)))
+    (should (member "cursor=page-3" (nth 2 commands)))))
+
+(ert-deftest my/opencode-root-api-failures-never-return-partial-ids ()
+  (dolist (bad-page '(("not json")
+                      ("{}")
+                      ("{\"data\":[{\"id\":\"child\",\"parentID\":\"root\"}],\"cursor\":{}}")
+                      ("{\"data\":[],\"cursor\":{\"next\":\"page-2\"}}")
+                      ("" 1)))
+    (pcase-let ((`(,ids ,failure ,_commands)
+                 (my/test-opencode-root-pages
+                  (list '("{\"data\":[{\"id\":\"root\"}],\"cursor\":{\"next\":\"page-2\"}}")
+                        bad-page))))
+      (should-not ids)
+      (should (stringp failure)))))
+
+(ert-deftest my/opencode-root-api-timeout-fails-and-cleans-up ()
+  (pcase-let ((`(,ids ,failure ,_commands)
+               (my/test-opencode-root-pages '(("")) t)))
+    (should-not ids)
+    (should (equal failure "lookup timed out"))))
+
+(ert-deftest my/opencode-root-api-missing-executable-fails-and-cleans-up ()
+  (let ((my/agent-shell-opencode-executable "/does/not/exist/opencode")
+        (before (buffer-list))
+        failure)
+    (my/agent-shell--opencode-root-session-ids
+     (lambda (_) (ert-fail "Unexpected success"))
+     (lambda (reason) (setq failure reason)))
+    (should (stringp failure))
+    (should-not (seq-difference (buffer-list) before))))
 
 (ert-deftest my/opencode-dev-directory-boundary ()
   (dolist (directory (list "~/Dev" "~/Dev/" "~/Dev/balance-interest-bacc-682"))

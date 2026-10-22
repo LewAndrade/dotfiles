@@ -2312,6 +2312,12 @@ Keep pagination cursors even when a page has no Dev sessions, so older sessions
 remain reachable. Empty =New session= entries are separate unused sessions;
 they are not placeholders for conversations moved into worktrees.
 
+The OpenCode Dev picker hides subagent sessions. ACP omits their parent IDs,
+so after collecting its pages, check the IDs against OpenCode's root-session
+API. Fetch every API page asynchronously, keeping Emacs responsive. If that
+lookup fails or times out, show the original choices with a warning instead.
+Nothing is deleted, and Claude and directory-specific pickers stay unchanged.
+
 #+begin_src emacs-lisp
 (defun my/agent-shell--dev-list-request (orig &rest args)
   "List Claude and OpenCode sessions throughout Dev, preserving pagination."
@@ -2368,6 +2374,107 @@ they are not placeholders for conversations moved into worktrees.
        (string-prefix-p (expand-file-name "~/Dev/")
                         (file-name-as-directory (expand-file-name directory))
                         (file-name-case-insensitive-p (expand-file-name "~/Dev/")))))
+
+(defun my/agent-shell--opencode-dev-root-sessions (orig &rest args)
+  "Hide subagents after ORIG finishes listing OpenCode Dev sessions in ARGS."
+  (let ((state (plist-get args :state))
+        (cwd (plist-get args :cwd))
+        (buffer (or (plist-get args :buffer) (current-buffer)))
+        (on-success (plist-get args :on-success)))
+    (when (and (eq (map-nested-elt state '(:agent-config :identifier)) 'opencode)
+               (my/agent-shell--dev-picker-p state cwd)
+               (not (plist-get args :cursor)))
+      (setq args
+            (plist-put
+             args :on-success
+             (lambda (sessions)
+               (if (not sessions)
+                   (funcall on-success sessions)
+                 (my/agent-shell--opencode-root-session-ids
+                  (lambda (ids)
+                    (when (buffer-live-p buffer)
+                      (with-current-buffer buffer
+                        (funcall on-success
+                                 (seq-filter
+                                  (lambda (session)
+                                    (gethash (map-elt session 'sessionId) ids))
+                                  sessions)))))
+                  (lambda (reason)
+                    (when (buffer-live-p buffer)
+                      (with-current-buffer buffer
+                        (message "OpenCode: could not hide subagents (%s); showing all sessions"
+                                 reason)
+                        (funcall on-success sessions))))))))))
+    (apply orig args)))
+
+(defun my/agent-shell--opencode-root-session-ids
+    (on-success on-failure &optional cursor ids seen-cursors)
+  "Fetch root session IDs asynchronously, then call ON-SUCCESS with a hash table.
+Call ON-FAILURE with a reason on error.  CURSOR, IDS and SEEN-CURSORS
+carry pagination state; never return a partially fetched set of IDs."
+  (let ((output (generate-new-buffer " *opencode-root-sessions*"))
+        (errors (generate-new-buffer " *opencode-root-sessions-errors*"))
+        (ids (or ids (make-hash-table :test #'equal)))
+        timer)
+    (condition-case err
+        (let ((process
+               (make-process
+                :name "opencode-root-sessions" :buffer output :stderr errors
+                :noquery t :connection-type 'pipe
+                :command (append
+                          (list my/agent-shell-opencode-executable
+                                "api" "session.list" "--param" "parentID=null"
+                                "--param" "limit=1000")
+                          (when cursor (list "--param" (concat "cursor=" cursor))))
+                :sentinel
+                (lambda (process _event)
+                  (when (and (memq (process-status process) '(exit signal))
+                             (not (process-get process 'handled)))
+                    (process-put process 'handled t)
+                    (when timer (cancel-timer timer))
+                    (let (next failure)
+                      (unwind-protect
+                          (condition-case err
+                              (progn
+                                (unless (zerop (process-exit-status process))
+                                  (error "%s" (if (process-get process 'timed-out)
+                                                  "lookup timed out" "API command failed")))
+                                (with-current-buffer output
+                                  (goto-char (point-min))
+                                  (let ((page (json-parse-buffer
+                                               :object-type 'alist :array-type 'list
+                                               :null-object nil :false-object :false)))
+                                    (unless (and (assq 'data page) (assq 'cursor page)
+                                                 (listp (map-elt page 'data)))
+                                      (error "Invalid session-list response"))
+                                    (dolist (session (map-elt page 'data))
+                                      (unless (and (stringp (map-elt session 'id))
+                                                   (not (map-elt session 'parentID)))
+                                        (error "Invalid root session"))
+                                      (puthash (map-elt session 'id) t ids))
+                                    (setq next (map-nested-elt page '(cursor next)))
+                                    (when (or (and next (not (stringp next)))
+                                              (member next seen-cursors))
+                                      (error "Invalid or repeated session-list cursor")))))
+                            (error (setq failure (error-message-string err))))
+                        (kill-buffer output)
+                        (kill-buffer errors))
+                      (cond
+                       (failure (funcall on-failure failure))
+                       (next (my/agent-shell--opencode-root-session-ids
+                              on-success on-failure next ids (cons next seen-cursors)))
+                       (t (funcall on-success ids)))))))))
+          (setq timer
+                (run-at-time 10 nil
+                             (lambda ()
+                               (when (process-live-p process)
+                                 (process-put process 'timed-out t)
+                                 (delete-process process))))))
+      (error
+       (when timer (cancel-timer timer))
+       (kill-buffer output)
+       (kill-buffer errors)
+       (funcall on-failure (error-message-string err))))))
 #+end_src
 
 Claude is the preferred agent, which is why the picker never appears. That is
@@ -3720,6 +3827,8 @@ keeps a resume quick.
 
   (advice-add 'agent-shell--send-request :around
               #'my/agent-shell--dev-list-request)
+  (advice-add 'agent-shell--list-sessions :around
+              #'my/agent-shell--opencode-dev-root-sessions)
   (advice-add 'agent-shell--send-request :around
               #'my/agent-shell--opencode-skill-request)
   (advice-add 'agent-shell--prompt-select-session :around
