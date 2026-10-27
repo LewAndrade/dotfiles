@@ -491,10 +491,9 @@ ANSWERS are the times returned by the first and second date prompts."
     (my/org-test-with-menu-keys '(?q)
       (should-error (my/org-capture-select-template-a #'ignore) :type 'user-error))
     (should-not (get-buffer "*Org Select*"))
+    ;; C-g aborts like q, so Doom's capture frame closes instead of staying.
     (cl-letf (((symbol-function 'read-char-exclusive) (lambda (&rest _) (signal 'quit nil))))
-      (should (eq 'quit (condition-case nil
-                          (my/org-capture-select-template-a #'ignore)
-                        (quit 'quit)))))
+      (should-error (my/org-capture-select-template-a #'ignore) :type 'user-error))
     (should-not (get-buffer "*Org Select*"))))
 
 (ert-deftest my/org-workflow-grid-menu-yields-to-org-for-explicit-keys-and-foreign-templates ()
