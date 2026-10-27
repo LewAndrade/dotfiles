@@ -941,12 +941,15 @@ profile-labelled layout. Redraws preserve source actions and removable zoom.
     (when (bound-and-true-p olivetti-mode) (olivetti-mode -1))
     (setq my/org-agenda-focus--owns-centering nil)))
 
+(defvar my/org-agenda-today-width 140
+  "Columns of the centred Today view. About 30 go to icon, date note and state.")
+
 (defun my/org-agenda-style-centering ()
-  "Give Today a 112-column body without wrapping or changing source files."
+  "Give Today a `my/org-agenda-today-width' body without wrapping or changing files."
   (if (and my/org-agenda-center-today (my/org-agenda-focused-p)
            (display-graphic-p) (require 'olivetti nil t))
       (progn
-        (setq-local olivetti-body-width 112)
+        (setq-local olivetti-body-width my/org-agenda-today-width)
         (unless (bound-and-true-p olivetti-mode)
           (let ((olivetti-mode-on-hook nil)) (olivetti-mode 1))
           (setq my/org-agenda-focus--owns-centering t)
