@@ -1130,7 +1130,8 @@ profile-labelled layout. Redraws preserve source actions and removable zoom.
   "Configure central capture files, task states, and explicit agenda views."
   (let ((work (my/org-file "work.org"))
         (personal (my/org-file "personal.org"))
-        (reading (my/org-file "reading.org")))
+        (reading (my/org-file "reading.org"))
+        (recommendations (my/org-file "recommendations.org")))
     (setq org-agenda-files (append (my/org-profile-files "work")
                                    (my/org-profile-files "personal"))
           org-default-notes-file personal
@@ -1153,7 +1154,9 @@ profile-labelled layout. Redraws preserve source actions and removable zoom.
           org-agenda-todo-ignore-deadlines nil
           org-agenda-todo-ignore-timestamp nil
           org-deadline-warning-days 7
-          org-refile-targets `(((,work ,personal) :maxlevel . 2))
+          org-refile-targets `(((,work ,personal) :maxlevel . 2)
+                               ;; Weekly review: Inbox items move into a category.
+                               (,recommendations :maxlevel . 2))
           org-refile-use-outline-path 'file
           org-outline-path-complete-in-steps nil
           org-refile-allow-creating-parent-nodes 'confirm
@@ -1178,6 +1181,8 @@ profile-labelled layout. Redraws preserve source actions and removable zoom.
             ("pa" "All-day event (auto-sync)" entry
              (file ,(my/org-file "calendar-personal.org"))
              "* %?\n:org-gcal:\n%(my/org-capture-all-day-range)\n:END:\n" :empty-lines 1)
+            ("pr" "Recommendation" entry (file+headline ,recommendations "Inbox")
+             "* %^{Who or what}\n%U\n%?\n" :empty-lines 1)
             ("r" "Reading: paste a link" item (file+headline ,reading "Inbox")
              "- [ ] %?")
             ;; Filled by the browser bookmarklet through org-protocol.
@@ -1227,6 +1232,11 @@ profile-labelled layout. Redraws preserve source actions and removable zoom.
   (interactive)
   (org-capture nil "pt"))
 
+(defun my/org-capture-recommendation ()
+  "Capture a recommendation into the recommendations inbox."
+  (interactive)
+  (org-capture nil "pr"))
+
 (defun my/org-capture-reading ()
   "Capture a link into the reading inbox."
   (interactive)
@@ -1271,7 +1281,8 @@ profile-labelled layout. Redraws preserve source actions and removable zoom.
       :desc "Review all tasks" "n r" #'my/org-review
       :desc "Capture Work task" "n w" #'my/org-capture-work-task
       :desc "Capture Personal task" "n p" #'my/org-capture-personal-task
-      :desc "Capture reading" "n R" #'my/org-capture-reading)
+      :desc "Capture reading" "n R" #'my/org-capture-reading
+      :desc "Capture recommendation" "n e" #'my/org-capture-recommendation)
 #+end_src
 
 ** Personal calendar sync
