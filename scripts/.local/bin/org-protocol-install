@@ -1,7 +1,8 @@
 #!/bin/sh
 # Build ~/Applications/OrgProtocol.app and register it as the macOS handler for
 # org-protocol:// links, so a browser bookmarklet can send pages to Emacs
-# capture. Emacs.app only registers mailto:. Safe to run again.
+# capture, in Doom's small capture frame. Emacs.app only registers mailto:.
+# Safe to run again.
 set -eu
 
 APP="$HOME/Applications/OrgProtocol.app"
@@ -12,10 +13,12 @@ LSREGISTER=/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchSe
 mkdir -p "$HOME/Applications"
 rm -rf "$APP"
 
+# The URL is percent-encoded by the bookmarklet, so it holds no double quote or
+# backslash and is safe inside an Elisp string. Emacs focuses only the new
+# capture frame, so the main window stays where it is.
 osacompile -o "$APP" <<EOF
 on open location theURL
-	do shell script "$EMACSCLIENT -n " & quoted form of theURL
-	tell application "Emacs" to activate
+	do shell script "$EMACSCLIENT -n -e " & quoted form of ("(my/org-protocol-capture-frame \\"" & theURL & "\\")")
 end open location
 EOF
 

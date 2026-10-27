@@ -984,7 +984,8 @@ A nil row is a blank line.")
             (org-switch-to-buffer-other-window buffer)
             (fit-window-to-buffer)
             (while (not entry)
-              (let* ((char (read-char-exclusive prompt))
+              ;; C-g aborts like q, so a capture frame closes instead of staying.
+              (let* ((char (condition-case nil (read-char-exclusive prompt) (quit ?q)))
                      (key (and (characterp char) (char-to-string char))))
                 (cond
                  ((or (equal key "q") (eq char ?\e)) (user-error "Abort"))
@@ -994,6 +995,15 @@ A nil row is a blank line.")
                                          (if key key (key-description (vector char))))))))))
         (when (buffer-live-p buffer) (kill-buffer buffer))))
     entry))
+
+(defun my/org-protocol-capture-frame (url)
+  "Capture the browser's org-protocol URL in Doom's small capture frame.
+OrgProtocol.app calls this, so a capture from Chrome looks like the global
+capture shortcut: its own centred frame, closed when the capture ends."
+  (require 'org-protocol)
+  (let ((+org-capture-fn
+         (lambda () (org-protocol-check-filename-for-protocol url (list url) nil))))
+    (+org-capture/open-frame)))
 
 (defun my/org-capture-select-template-a (fn &optional keys)
   "Use the grid menu when no KEYS are given and our templates are installed."
