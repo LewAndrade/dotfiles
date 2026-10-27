@@ -155,9 +155,8 @@
 (ert-deftest my/org-workflow-capture-menu-and-event-separation ()
   (my/org-test-workspace
     (should (equal (mapcar #'car org-capture-templates)
-                   '("w" "wt" "wn" "we" "wa" "p" "pt" "pn" "pe" "pa" "pr"
-                     "r" "b" "br" "bw" "bp")))
-    (dolist (key '("we" "wa" "pe" "pa"))
+                   '("t" "T" "e" "E" "n" "N" "r" "i")))
+    (dolist (key '("e" "E"))
       (let ((template (assoc key org-capture-templates)))
         (should (equal (car (nth 3 template)) 'file))
         (should (string-match-p "calendar-" (cadr (nth 3 template))))
@@ -165,8 +164,8 @@
 
 (ert-deftest my/org-workflow-task-capture-saves-to-correct-profile ()
   (my/org-test-workspace
-    (dolist (case '(("wt" "work.org" "Work capture")
-                    ("pt" "personal.org" "Personal capture")))
+    (dolist (case '(("t" "work.org" "Work capture")
+                    ("T" "personal.org" "Personal capture")))
       (save-window-excursion
         (org-capture nil (car case))
         (insert (nth 2 case))
@@ -178,7 +177,7 @@
 (ert-deftest my/org-workflow-note-capture-has-no-todo ()
   (my/org-test-workspace
     (save-window-excursion
-      (org-capture nil "pn")
+      (org-capture nil "N")
       (insert "A private note")
       (org-capture-finalize))
     (with-temp-buffer
@@ -188,11 +187,12 @@
 
 (ert-deftest my/org-workflow-event-capture-is-local-and-has-a-time-range ()
   (my/org-test-workspace
-    (dolist (case '(("pe" "calendar-personal.org") ("we" "calendar-work.org")))
+    (dolist (case '(("E" "calendar-personal.org") ("e" "calendar-work.org")))
       (let ((date-calls 0) (duration-calls 0))
         (cl-letf (((symbol-function 'org-read-date)
                    (lambda (&rest args)
                      (should (car args)) (should (nth 1 args))
+                     (setq org-time-was-given t)
                      (cl-incf date-calls) (encode-time 0 0 10 9 10 2026)))
                   ((symbol-function 'read-string)
                    (lambda (_prompt _initial _history default &rest _)
@@ -234,7 +234,7 @@
     (cl-letf (((symbol-function 'org-read-date)
                (lambda (&rest _) (encode-time 0 30 23 (nth 2 case) (nth 1 case) (car case))))
               ((symbol-function 'read-string) (lambda (&rest _) "1h30")))
-      (should (equal (my/org-capture-timed-range)
+      (should (equal (my/org-capture-timed-range (encode-time 0 30 23 (nth 2 case) (nth 1 case) (car case)))
                      (concat (format-time-string "<%Y-%m-%d %a %H:%M>"
                                                  (encode-time 0 30 23 (nth 2 case) (nth 1 case) (car case)))
                              "--" (nth 3 case)))))))
@@ -245,9 +245,9 @@
                (lambda (&rest _) (cl-incf date-calls) (encode-time 0 0 10 9 10 2026)))
               ((symbol-function 'read-string)
                (lambda (&rest _) (unless inputs (ert-fail "Unexpected extra duration prompt")) (pop inputs))))
-      (should (equal (my/org-capture-timed-range)
+      (should (equal (my/org-capture-timed-range (encode-time 0 0 10 9 10 2026))
                      "<2026-10-09 Fri 10:00>--<2026-10-09 Fri 10:30>")))
-    (should (= date-calls 1))
+    (should (= date-calls 0))
     (should-not inputs)))
 
 (ert-deftest my/org-workflow-timed-range-duration-is-elapsed-time-across-dst ()
@@ -258,7 +258,7 @@
           (cl-letf (((symbol-function 'org-read-date)
                      (lambda (&rest _) (encode-time 0 30 1 8 3 2026)))
                     ((symbol-function 'read-string) (lambda (&rest _) "2h")))
-            (should (equal (my/org-capture-timed-range)
+            (should (equal (my/org-capture-timed-range (encode-time 0 30 1 8 3 2026))
                            "<2026-03-08 Sun 01:30>--<2026-03-08 Sun 04:30>"))))
       (set-time-zone-rule previous-zone))))
 
@@ -333,7 +333,7 @@
 
 (ert-deftest my/org-workflow-all-day-capture-same-date-is-one-day ()
   (my/org-test-workspace
-    (dolist (case '(("pa" "calendar-personal.org") ("wa" "calendar-work.org")))
+    (dolist (case '(("E" "calendar-personal.org") ("e" "calendar-work.org")))
       (let* ((day (encode-time 0 0 0 12 10 2026))
              (calls nil))
         (cl-letf (((symbol-function 'org-read-date)
@@ -344,7 +344,7 @@
             (org-capture-finalize)))
         (should (= (length calls) 2))
         (should-not (caar calls))
-        (should-not (car (cadr calls)))
+        (should (car (cadr calls)))
         (should (equal (nth 4 (car calls)) day))
         (with-temp-buffer
           (insert-file-contents (my/org-file (cadr case)))
@@ -357,7 +357,7 @@
     (let ((dates (list (encode-time 0 0 0 12 10 2026) (encode-time 0 0 0 14 10 2026))))
       (cl-letf (((symbol-function 'org-read-date) (lambda (&rest _) (pop dates))))
         (save-window-excursion
-          (org-capture nil "pa")
+          (org-capture nil "E")
           (insert "Several days")
           (org-capture-finalize))))
     (with-temp-buffer
@@ -366,9 +366,144 @@
       (should-not (string-match-p "[0-9][0-9]:[0-9][0-9]" (buffer-string))))))
 
 (ert-deftest my/org-workflow-all-day-capture-rejects-backward-date-range ()
-  (let ((dates (list (encode-time 0 0 0 14 10 2026) (encode-time 0 0 0 12 10 2026))))
+  (let ((dates (list (encode-time 0 0 0 12 10 2026))))
     (cl-letf (((symbol-function 'org-read-date) (lambda (&rest _) (pop dates))))
-      (should-error (my/org-capture-all-day-range) :type 'user-error))))
+      (should-error (my/org-capture-all-day-range (encode-time 0 0 0 14 10 2026))
+                    :type 'user-error))))
+
+(defun my/org-test-event-range (given end-time &rest answers)
+  "Run `my/org-capture-event-range' with a stubbed date prompt.
+GIVEN and END-TIME become `org-time-was-given' and `org-end-time-was-given'.
+ANSWERS are the times returned by the first and second date prompts."
+  (let ((prompts nil))
+    (cl-letf (((symbol-function 'org-read-date)
+               (lambda (&rest args)
+                 (push (nth 3 args) prompts)
+                 (when (= (length prompts) 1)
+                   (setq org-time-was-given given
+                         org-end-time-was-given end-time))
+                 (pop answers)))
+              ((symbol-function 'read-string) (lambda (&rest _) "1h30")))
+      (cons (my/org-capture-event-range) (nreverse prompts)))))
+
+(ert-deftest my/org-workflow-event-range-with-a-time-asks-for-a-duration ()
+  (let ((result (my/org-test-event-range t nil (encode-time 0 0 10 9 10 2026))))
+    (should (equal (car result) "<2026-10-09 Fri 10:00>--<2026-10-09 Fri 11:30>"))
+    (should (equal (cdr result) '("Event (add a time for a timed event): ")))))
+
+(ert-deftest my/org-workflow-event-range-uses-the-typed-end-time ()
+  (cl-letf (((symbol-function 'read-string) (lambda (&rest _) (ert-fail "No duration prompt"))))
+    (let ((result (my/org-test-event-range t "11:15" (encode-time 0 0 10 9 10 2026))))
+      (should (equal (car result) "<2026-10-09 Fri 10:00>--<2026-10-09 Fri 11:15>")))
+    (should-error (my/org-test-event-range t "09:00" (encode-time 0 0 10 9 10 2026))
+                  :type 'user-error)))
+
+(ert-deftest my/org-workflow-event-range-without-a-time-is-all-day ()
+  (let ((result (my/org-test-event-range nil nil
+                                         (encode-time 0 0 0 12 10 2026)
+                                         (encode-time 0 0 0 12 10 2026))))
+    (should (equal (car result) "<2026-10-12 Mon>"))
+    (should (equal (nth 2 result) "End date (RET: same day): ")))
+  (should (equal (car (my/org-test-event-range nil nil
+                                               (encode-time 0 0 0 12 10 2026)
+                                               (encode-time 0 0 0 14 10 2026)))
+                 "<2026-10-12 Mon>--<2026-10-14 Wed>")))
+
+(ert-deftest my/org-workflow-capture-link-is-empty-outside-org-protocol ()
+  (let ((org-capture-link-is-already-stored nil)
+        (org-store-link-plist '(:link "https://example.com" :description "Example")))
+    (should (equal (my/org-capture-link) ""))))
+
+(ert-deftest my/org-workflow-capture-link-formats-the-browser-page ()
+  (let ((org-capture-link-is-already-stored t))
+    (let ((org-store-link-plist '(:link "https://example.com/a" :description "A [odd] page")))
+      (should (equal (my/org-capture-link)
+                     (org-link-make-string "https://example.com/a" "A [odd] page")))
+      (should (string-prefix-p "[[https://example.com/a][" (my/org-capture-link))))
+    (let ((org-store-link-plist '(:link "https://example.com/a" :description "")))
+      (should (equal (my/org-capture-link)
+                     "[[https://example.com/a][https://example.com/a]]")))
+    (let ((org-store-link-plist nil))
+      (should (equal (my/org-capture-link) "")))))
+
+(ert-deftest my/org-workflow-protocol-capture-adds-the-link-and-plain-capture-does-not ()
+  (my/org-test-workspace
+    (let ((org-capture-link-is-already-stored t)
+          (org-store-link-plist '(:link "https://example.com/a" :description "Example")))
+      (save-window-excursion
+        (org-capture nil "t")
+        (insert "From the browser")
+        (org-capture-finalize)))
+    (save-window-excursion
+      (org-capture nil "t")
+      (insert "From Emacs")
+      (org-capture-finalize))
+    (let ((text (with-temp-buffer
+                  (insert-file-contents (my/org-file "work.org"))
+                  (buffer-string))))
+      (should (string-match-p "\\*\\* TODO From the browser\n\\[\\[https://example.com/a\\]\\[Example\\]\\]" text))
+      (should (string-match-p "\\*\\* TODO From Emacs\n" text))
+      (should (= (length (split-string text "example.com")) 2)))))
+
+(defmacro my/org-test-with-menu-keys (keys &rest body)
+  "Run BODY with `read-char-exclusive' returning KEYS in order."
+  (declare (indent 1))
+  `(let ((keys ,keys))
+     (cl-letf (((symbol-function 'read-char-exclusive)
+                (lambda (&rest _) (or (pop keys) (ert-fail "Menu asked for too many keys")))))
+       ,@body)))
+
+(ert-deftest my/org-workflow-grid-menu-returns-the-template-for-each-key ()
+  (my/org-test-workspace
+    (dolist (key '("t" "T" "e" "E" "n" "N" "r" "i"))
+      (my/org-test-with-menu-keys (list (string-to-char key))
+        (should (equal (my/org-capture-select-template-a #'ignore)
+                       (assoc key org-capture-templates)))))
+    (should-not (get-buffer "*Org Select*"))))
+
+(ert-deftest my/org-workflow-grid-menu-is-drawn-as-a-grid ()
+  (my/org-test-workspace
+    (let (text)
+      (cl-letf (((symbol-function 'read-char-exclusive)
+                 (lambda (&rest _)
+                   (setq text (with-current-buffer "*Org Select*" (buffer-string)))
+                   ?t)))
+        (my/org-capture-select-template-a #'ignore))
+      (let ((plain (substring-no-properties text)))
+        (should (string-match-p "Capture" plain))
+        (should (string-match-p "Work +Personal" plain))
+        (should (string-match-p "Task +\\[t\\] Task +\\[T\\] Task" plain))
+        (should (string-match-p "Event +\\[e\\] Event +\\[E\\] Event" plain))
+        (should (string-match-p "Note +\\[n\\] Note +\\[N\\] Note" plain))
+        (should (string-match-p "Collect +\\[r\\] Reading +\\[i\\] Recommendation" plain))))))
+
+(ert-deftest my/org-workflow-grid-menu-reprompts-and-aborts ()
+  (my/org-test-workspace
+    (let ((messages nil) (count 0))
+      (cl-letf (((symbol-function 'read-char-exclusive)
+                 (lambda (prompt)
+                   (push prompt messages)
+                   (cl-incf count)
+                   (if (= count 1) ?z ?e))))
+        (should (equal (my/org-capture-select-template-a #'ignore)
+                       (assoc "e" org-capture-templates))))
+      (should (string-match-p "z is not a template key" (car messages))))
+    (my/org-test-with-menu-keys '(?q)
+      (should-error (my/org-capture-select-template-a #'ignore) :type 'user-error))
+    (should-not (get-buffer "*Org Select*"))
+    (cl-letf (((symbol-function 'read-char-exclusive) (lambda (&rest _) (signal 'quit nil))))
+      (should (eq 'quit (condition-case nil
+                          (my/org-capture-select-template-a #'ignore)
+                        (quit 'quit)))))
+    (should-not (get-buffer "*Org Select*"))))
+
+(ert-deftest my/org-workflow-grid-menu-yields-to-org-for-explicit-keys-and-foreign-templates ()
+  (my/org-test-workspace
+    (should (equal (my/org-capture-select-template-a (lambda (keys) (list 'original keys)) "t")
+                   '(original "t")))
+    (let ((org-capture-templates '(("x" "Other" entry (file "x.org") "* %?"))))
+      (should (equal (my/org-capture-select-template-a (lambda (keys) (list 'original keys)))
+                     '(original nil))))))
 
 (ert-deftest my/org-workflow-today-is-focused ()
   (my/org-test-workspace

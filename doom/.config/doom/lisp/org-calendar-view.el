@@ -340,12 +340,12 @@ Tasks stay when unscheduled, and Google events are cancelled, not deleted."
   (condition-case nil
       (pcase (car (read-multiple-choice
                    "New: "
-                   '((?e "personal event" "Personal event, synced to Google Calendar")
-                     (?w "work event" "Work event, local only")
-                     (?t "work task" "Work task, scheduled in work.org Inbox")
-                     (?p "personal task" "Personal task, scheduled in personal.org Inbox")
+                   '((?t "work task" "Work task, scheduled in work.org Inbox")
+                     (?T "personal task" "Personal task, scheduled in personal.org Inbox")
+                     (?e "work event" "Work event, local only")
+                     (?E "personal event" "Personal event, synced to Google Calendar")
                      (?q "cancel" "Create nothing"))))
-        (?e 'personal-event) (?w 'work-event) (?t 'work-task) (?p 'personal-task))
+        (?t 'work-task) (?T 'personal-task) (?e 'work-event) (?E 'personal-event))
     (quit nil)))
 
 (defun my/org-calendar-view--read-entry ()

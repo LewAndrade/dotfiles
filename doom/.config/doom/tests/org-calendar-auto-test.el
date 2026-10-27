@@ -227,7 +227,7 @@
     (let ((dates (list (encode-time 0 0 0 12 10 2026) (encode-time 0 0 0 12 10 2026))))
       (cl-letf (((symbol-function 'org-read-date) (lambda (&rest _) (pop dates))))
         (save-window-excursion
-          (org-capture nil "pa")
+          (org-capture nil "E")
           (insert "Captured all-day event")
           (org-capture-finalize))))
     (my/org-calendar-auto--start)
@@ -240,12 +240,13 @@
 (ert-deftest my/calendar-auto-duration-capture-saved-before-finalizing-syncs-once ()
   (my/calendar-test-workspace
     (let ((start (encode-time 0 30 23 31 12 2026)) (duration-calls 0))
-      (cl-letf (((symbol-function 'org-read-date) (lambda (&rest _) start))
+      (cl-letf (((symbol-function 'org-read-date)
+                 (lambda (&rest _) (setq org-time-was-given t) start))
                 ((symbol-function 'read-string)
                  (lambda (&rest _)
                    (should (= (cl-incf duration-calls) 1)) "1h30m")))
         (save-window-excursion
-          (org-capture nil "pe")
+          (org-capture nil "E")
           (insert "Overnight duration capture")
           (save-buffer)
           (org-capture-finalize)))
@@ -313,7 +314,7 @@
         ;; Simulate the package lazily registering its hook again after setup.
         (add-hook 'org-capture-after-finalize-hook 'org-gcal--capture-post)
         (save-window-excursion
-          (org-capture nil "pa")
+          (org-capture nil "E")
           (insert "One owner of publishing")
           (org-capture-finalize))
         (should-not org/calendar-test-published)

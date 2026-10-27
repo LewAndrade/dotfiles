@@ -759,11 +759,18 @@ notes stay in place.
 
 =SPC n d= opens Today; =SPC n r= opens Review, with Today above the other open
 tasks. Tasks already in Today are not repeated below; undated and future tasks
-remain visible. =SPC X= or =SPC n n= opens Work/Personal capture, then Task/Note/Timed event/
-All-day event. Capture keeps
-Doom's existing popup. Dates are optional for tasks and required for events.
-Timed events ask for a start date/time and a duration (default =1h=), with a live
-end-time preview instead of a second date picker. Bare durations mean minutes.
+remain visible. =SPC X= or =SPC n n= opens one capture menu, drawn as a grid
+with single-key templates: =t= / =T= Work / Personal task, =e= / =E= event,
+=n= / =N= note (lower case is Work, upper case is Personal), =r= Reading and =i=
+Recommendation. Capture keeps Doom's existing popup. Dates are optional for tasks
+and required for events. An event asks once for a date. Add a time (=10:00= or
+=10:00-11:30=) and it is a timed event: without an end time it asks for a
+duration (default =1h=), with a live end-time preview. Bare durations mean
+minutes. Give only a date and it is an all-day event; a second prompt takes the
+last day (RET: same day).
+A capture from the browser bookmarklet shows the same menu; tasks, notes,
+Reading and Recommendation add the page link on their own. Other captures never
+add a link.
 The cheatsheet is =~/Documents/org/notes/org-agenda.org=.
 Agenda styling borrows the category icons and quiet layout from
 [[https://github.com/psamim/dotfiles/blob/master/doom/config.el][psamim's configuration]], but keeps full task states, overdue warnings, and
@@ -843,24 +850,37 @@ profile-labelled layout. Redraws preserve source actions and removable zoom.
           (remove-hook 'post-command-hook update-preview t)))
       (when (overlayp preview-overlay) (delete-overlay preview-overlay)))))
 
-(defun my/org-capture-timed-range ()
-  "Prompt once for the start, then calculate the end from an elapsed duration."
-  (let ((start (org-read-date t t nil "Event start (date and time): "))
-        minutes)
-    (while (null minutes)
-      (let ((duration (my/org-read-event-duration start)))
-        (condition-case problem
-            (setq minutes (my/org-event-duration-minutes duration))
-          (user-error (message "%s" (error-message-string problem))))))
+(defvar org-capture-link-is-already-stored)
+(defvar org-store-link-plist)
+
+(defun my/org-capture-timed-range (start &optional end-time)
+  "Return the timed range beginning at START.
+END-TIME is an \"HH:MM\" string for the same day.  Without it, ask for a duration."
+  (let (end)
+    (if end-time
+        (progn
+          (unless (string-match "\\`\\([0-9]+\\):\\([0-9]+\\)\\'" end-time)
+            (user-error "Enter the end time as HH:MM"))
+          (let ((day (decode-time start)))
+            (setq end (encode-time 0 (string-to-number (match-string 2 end-time))
+                                   (string-to-number (match-string 1 end-time))
+                                   (nth 3 day) (nth 4 day) (nth 5 day))))
+          (unless (time-less-p start end)
+            (user-error "The end time must be after the start time")))
+      (let (minutes)
+        (while (null minutes)
+          (let ((duration (my/org-read-event-duration start)))
+            (condition-case problem
+                (setq minutes (my/org-event-duration-minutes duration))
+              (user-error (message "%s" (error-message-string problem))))))
+        (setq end (time-add start (seconds-to-time (* minutes 60))))))
     (concat (format-time-string "<%Y-%m-%d %a %H:%M>" start)
             "--"
-            (format-time-string "<%Y-%m-%d %a %H:%M>"
-                                (time-add start (seconds-to-time (* minutes 60)))))))
+            (format-time-string "<%Y-%m-%d %a %H:%M>" end))))
 
-(defun my/org-capture-all-day-range ()
-  "Prompt for inclusive all-day dates; default the end to the start."
-  (let* ((start (org-read-date nil t nil "All-day start date: "))
-         (end (org-read-date nil t nil "End date (RET: same day): " start))
+(defun my/org-capture-all-day-range (start)
+  "Prompt for the inclusive end date after START; default it to START."
+  (let* ((end (org-read-date nil t nil "End date (RET: same day): " start))
          (start-date (format-time-string "%Y-%m-%d" start))
          (end-date (format-time-string "%Y-%m-%d" end)))
     (when (string< end-date start-date)
@@ -869,6 +889,117 @@ profile-labelled layout. Redraws preserve source actions and removable zoom.
         (format-time-string "<%Y-%m-%d %a>" start)
       (concat (format-time-string "<%Y-%m-%d %a>" start)
               "--" (format-time-string "<%Y-%m-%d %a>" end)))))
+
+(defun my/org-capture-event-range ()
+  "Prompt once; a time makes a timed event, a bare date makes an all-day one."
+  ;; `org-read-date' sets these two; bind them here so the answer stays local.
+  (defvar org-time-was-given)
+  (defvar org-end-time-was-given)
+  (let* (org-time-was-given
+         org-end-time-was-given
+         (start (org-read-date t t nil "Event (add a time for a timed event): "))
+         (timed org-time-was-given)
+         (end-time org-end-time-was-given))
+    (if timed
+        (my/org-capture-timed-range start end-time)
+      (my/org-capture-all-day-range start))))
+
+(defun my/org-capture-link ()
+  "Return an Org link to the page being captured, or \"\" outside org-protocol.
+Org-protocol binds `org-capture-link-is-already-stored' around the capture."
+  (let ((link (and org-capture-link-is-already-stored
+                   (plist-get org-store-link-plist :link))))
+    (if (string-empty-p (or link ""))
+        ""
+      (let ((description (plist-get org-store-link-plist :description)))
+        (org-link-make-string
+         link (if (string-empty-p (string-trim (or description ""))) link description))))))
+
+(defconst my/org-capture-menu-columns '("Work" "Personal")
+  "Column headers of the capture menu.")
+
+(defconst my/org-capture-menu-rows
+  '(("Task" ("t" . "Task") ("T" . "Task"))
+    ("Event" ("e" . "Event") ("E" . "Event"))
+    ("Note" ("n" . "Note") ("N" . "Note"))
+    nil
+    ("Collect" ("r" . "Reading") ("i" . "Recommendation")))
+  "Rows of the capture menu: label, left key and name, right key and name.
+A nil row is a blank line.")
+
+(defun my/org-capture-menu--keys ()
+  "Return every template key shown in the capture menu."
+  (cl-loop for row in my/org-capture-menu-rows
+           append (mapcar #'car (cdr row))))
+
+(defun my/org-capture-menu--draw ()
+  "Insert the capture menu at point."
+  (let* ((rows (delq nil my/org-capture-menu-rows))
+         (left (+ 2 (apply #'max (mapcar (lambda (row) (length (car row))) rows)) 4))
+         (right (+ left 4 (apply #'max (mapcar (lambda (row) (+ 4 (length (cdr (nth 1 row))))) rows))))
+         (to (lambda (column)
+               (insert (propertize " " 'display `(space :align-to ,column)))))
+         (entry (lambda (item)
+                  (insert (propertize "[" 'face 'shadow)
+                          (propertize (car item) 'face 'help-key-binding)
+                          (propertize "]" 'face 'shadow)
+                          " " (cdr item)))))
+    (insert (propertize "Capture" 'face 'bold) "\n"
+            (propertize "=======" 'face 'shadow) "\n\n")
+    (funcall to left)
+    (insert (propertize (nth 0 my/org-capture-menu-columns) 'face 'bold))
+    (funcall to right)
+    (insert (propertize (nth 1 my/org-capture-menu-columns) 'face 'bold) "\n")
+    (dolist (row my/org-capture-menu-rows)
+      (when row
+        (funcall to 2)
+        (insert (propertize (car row) 'face 'shadow))
+        (funcall to left)
+        (funcall entry (nth 1 row))
+        (funcall to right)
+        (funcall entry (nth 2 row)))
+      (insert "\n"))))
+
+(defun my/org-capture-menu--available-p ()
+  "Return non-nil when every key of the capture menu has a template."
+  (let ((keys (mapcar #'car org-capture-templates)))
+    (cl-every (lambda (key) (member key keys)) (my/org-capture-menu--keys))))
+
+(defun my/org-capture-select-grid ()
+  "Show the capture menu in `*Org Select*' and return the chosen template."
+  (let ((buffer (get-buffer-create "*Org Select*"))
+        (keys (my/org-capture-menu--keys))
+        (prompt "Template key: ")
+        entry)
+    (save-window-excursion
+      (unwind-protect
+          (progn
+            (with-current-buffer buffer
+              (let ((inhibit-read-only t))
+                (erase-buffer)
+                (my/org-capture-menu--draw)
+                (goto-char (point-min)))
+              (setq buffer-read-only t
+                    cursor-type nil))
+            (org-switch-to-buffer-other-window buffer)
+            (fit-window-to-buffer)
+            (while (not entry)
+              (let* ((char (read-char-exclusive prompt))
+                     (key (and (characterp char) (char-to-string char))))
+                (cond
+                 ((or (equal key "q") (eq char ?\e)) (user-error "Abort"))
+                 ((and key (member key keys))
+                  (setq entry (assoc key org-capture-templates)))
+                 (t (setq prompt (format "%s is not a template key.  Template key: "
+                                         (if key key (key-description (vector char))))))))))
+        (when (buffer-live-p buffer) (kill-buffer buffer))))
+    entry))
+
+(defun my/org-capture-select-template-a (fn &optional keys)
+  "Use the grid menu when no KEYS are given and our templates are installed."
+  (if (or keys (not (my/org-capture-menu--available-p)))
+      (funcall fn keys)
+    (my/org-capture-select-grid)))
 
 (defun my/org-today-groups ()
   "Group the daily agenda without discarding unmatched entries."
@@ -1273,38 +1404,22 @@ long for its row is shortened with an ellipsis, so the tags stay whole."
           org-outline-path-complete-in-steps nil
           org-refile-allow-creating-parent-nodes 'confirm
           org-capture-templates
-          `(("w" "Work")
-            ("wt" "Task" entry (file+headline ,work "Inbox")
-             "* TODO %?\n" :empty-lines 1)
-            ("wn" "Note" entry (file+headline ,work "Notes")
-             "* %?\n%U\n\n%i\n" :empty-lines 1)
-            ("we" "Timed event (local only)" entry (file ,(my/org-file "calendar-work.org"))
-              "* %?\n:org-gcal:\n%(my/org-capture-timed-range)\n:END:\n" :empty-lines 1)
-            ("wa" "All-day event (local only)" entry (file ,(my/org-file "calendar-work.org"))
-             "* %?\n:org-gcal:\n%(my/org-capture-all-day-range)\n:END:\n" :empty-lines 1)
-            ("p" "Personal")
-            ("pt" "Task" entry (file+headline ,personal "Inbox")
-             "* TODO %?\n" :empty-lines 1)
-            ("pn" "Note" entry (file+headline ,personal "Notes")
-             "* %?\n%U\n\n%i\n" :empty-lines 1)
-            ("pe" "Timed event (auto-sync)" entry
-             (file ,(my/org-file "calendar-personal.org"))
-              "* %?\n:org-gcal:\n%(my/org-capture-timed-range)\n:END:\n" :empty-lines 1)
-            ("pa" "All-day event (auto-sync)" entry
-             (file ,(my/org-file "calendar-personal.org"))
-             "* %?\n:org-gcal:\n%(my/org-capture-all-day-range)\n:END:\n" :empty-lines 1)
-            ("pr" "Recommendation" entry (file+headline ,recommendations "Inbox")
-             "* %^{Who or what}\n%U\n%?\n" :empty-lines 1)
-            ("r" "Reading: paste a link" item (file+headline ,reading "Inbox")
-             "- [ ] %?")
-            ;; Filled by the browser bookmarklet through org-protocol.
-            ("b" "From the browser")
-            ("br" "Reading" item (file+headline ,reading "Inbox")
-             "- [ ] [[%:link][%:description]]%?")
-            ("bw" "Work task" entry (file+headline ,work "Inbox")
-             "* TODO %?\n[[%:link][%:description]]\n%i\n" :empty-lines 1)
-            ("bp" "Personal task" entry (file+headline ,personal "Inbox")
-             "* TODO %?\n[[%:link][%:description]]\n%i\n" :empty-lines 1))
+          `(("t" "Work task" entry (file+headline ,work "Inbox")
+             "* TODO %?\n%(my/org-capture-link)" :empty-lines 1)
+            ("T" "Personal task" entry (file+headline ,personal "Inbox")
+             "* TODO %?\n%(my/org-capture-link)" :empty-lines 1)
+            ("e" "Work event" entry (file ,(my/org-file "calendar-work.org"))
+             "* %?\n:org-gcal:\n%(my/org-capture-event-range)\n:END:\n" :empty-lines 1)
+            ("E" "Personal event" entry (file ,(my/org-file "calendar-personal.org"))
+             "* %?\n:org-gcal:\n%(my/org-capture-event-range)\n:END:\n" :empty-lines 1)
+            ("n" "Work note" entry (file+headline ,work "Notes")
+             "* %?\n%U\n\n%i\n%(my/org-capture-link)" :empty-lines 1)
+            ("N" "Personal note" entry (file+headline ,personal "Notes")
+             "* %?\n%U\n\n%i\n%(my/org-capture-link)" :empty-lines 1)
+            ("r" "Reading" item (file+headline ,reading "Inbox")
+             "- [ ] %(my/org-capture-link)%?")
+            ("i" "Recommendation" entry (file+headline ,recommendations "Inbox")
+             "* %^{Who or what}\n%U\n%(my/org-capture-link)%?\n" :empty-lines 1))
           org-agenda-custom-commands
            `(("d" "Today" agenda ""
               ((org-agenda-overriding-header ,(propertize "Today" 'my/org-focused-today t))
@@ -1334,16 +1449,6 @@ long for its row is shortened with an ellipsis, so the tags stay whole."
   (require 'org-agenda)
   (org-agenda nil "r"))
 
-(defun my/org-capture-work-task ()
-  "Capture a task directly into the Work inbox."
-  (interactive)
-  (org-capture nil "wt"))
-
-(defun my/org-capture-personal-task ()
-  "Capture a task directly into the Personal inbox."
-  (interactive)
-  (org-capture nil "pt"))
-
 ;; END org-workflow
 
 (defun my/org-auto-revert-notes-h ()
@@ -1354,9 +1459,12 @@ long for its row is shortened with an ellipsis, so the tags stay whole."
 
 (after! org
   (my/org-configure-workflow)
+  (advice-add 'org-capture-select-template :around #'my/org-capture-select-template-a)
   (add-hook 'org-mode-hook #'my/org-auto-revert-notes-h)
   ;; The OrgProtocol app hands org-protocol:// URLs from the browser to this server.
   (require 'org-protocol)
+  ;; The bookmarklet sends no template key, so the capture menu appears.
+  (setq org-protocol-default-template-key nil)
   ;; RESET_CHECK_BOXES clears the weekly and monthly review checklists on each repeat.
   (require 'org-checklist nil t))
 
@@ -1389,9 +1497,7 @@ long for its row is shortened with an ellipsis, so the tags stay whole."
 
 (map! :leader
       :desc "Today" "n d" #'my/org-today
-      :desc "Review all tasks" "n r" #'my/org-review
-      :desc "Capture Work task" "n w" #'my/org-capture-work-task
-      :desc "Capture Personal task" "n p" #'my/org-capture-personal-task)
+      :desc "Review all tasks" "n r" #'my/org-review)
 #+end_src
 
 ** Personal calendar sync

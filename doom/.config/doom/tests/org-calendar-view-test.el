@@ -175,13 +175,13 @@
           (end (my/calendar-view-test-minute 14 11 0))
           (org-timegrid-org--undo-transactions nil)
           (org-timegrid-org--redo-transactions nil))
-      (dolist (case '((?e "personal event" "calendar-personal.org"
+      (dolist (case '((?E "personal event" "calendar-personal.org"
                           "* Dentist\n:org-gcal:\n<2026-10-14 Wed 10:00-11:00>\n:END:\n")
-                      (?w "work event" "calendar-work.org"
+                      (?e "work event" "calendar-work.org"
                           "* Dentist\n:org-gcal:\n<2026-10-14 Wed 10:00-11:00>\n:END:\n")
                       (?t "work task" "work.org"
                           "** TODO Dentist\nSCHEDULED: <2026-10-14 Wed 10:00-11:00>\n")
-                      (?p "personal task" "personal.org"
+                      (?T "personal task" "personal.org"
                           "** TODO Dentist\nSCHEDULED: <2026-10-14 Wed 10:00-11:00>\n")))
         (pcase-let ((`(,key ,name ,file ,shape) case))
           (cl-letf (((symbol-function 'read-multiple-choice) (lambda (&rest _) (list key name)))
