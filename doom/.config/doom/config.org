@@ -1318,8 +1318,13 @@ Tasks and Work events are not mapped to Google. Private settings, encrypted
 tokens, and occurrence caches stay outside tracked repositories. Do not use raw
 =org-gcal-sync= / =org-gcal-fetch=: those bypass the automatic sync safeguards.
 Restart resumption and natural token expiry still need live verification.
+Bloom on the phone cannot read org-gcal's drawer timestamps, so
+=lisp/org-calendar-phone.el= keeps =calendar-phone.org=: a read-only copy of the
+personal calendar for the next 60 days, recurring events expanded, rewritten
+after every calendar save and every 10 minutes. It is not an agenda file.
 Personal Google Tasks sync uses a separate private approval; Work-calendar
-integration is not connected.
+integration is not connected. Tasks sync is off (=my/org-tasks-sync-enabled=)
+since Bloom on the phone took over tasks; set it to =t= to bring it back.
 Tasks authorization and read-only list inspection are available through
 Integrations (=SPC n i=), then Authorize Tasks. Setup adds a separate Tasks grant
 for the approved Personal account, without replacing Calendar's token. It does
@@ -1711,12 +1716,23 @@ See [[file:tests/README.md][Org workflow checks]] for safe regression-test comma
   (when (file-readable-p my/org-calendar-settings-file)
     (condition-case nil (my/org-calendar-auto-mode 1)
       (user-error (setq my/org-calendar-auto-mode nil)
-                   (message "Personal calendar automation awaits local setup")))))
+                   (message "Personal calendar automation awaits local setup")))
+    ;; Bloom ignores org-gcal's drawer timestamps, so keep a flat read-only copy
+    ;; (calendar-phone.org) with recurring events expanded for the phone.
+    (let ((dir (file-name-directory my/org-calendar-auth-worker-file)))
+      (load (expand-file-name "org-calendar-view.el" dir) nil t)
+      (load (expand-file-name "org-calendar-phone.el" dir) nil t)
+      (my/org-calendar-phone-mode 1))))
+
+(defvar my/org-tasks-sync-enabled nil
+  "Non-nil to sync Personal tasks with Google Tasks.
+Off since 27 Oct 2026: Bloom on the phone edits personal.org directly, so a
+second writer only caused Syncthing conflicts. Calendar events still sync.")
 
 (after! org
   ;; A separate private approval pins the Personal account and existing Tasks list.
   (let ((settings (expand-file-name "org-tasks.el" (file-name-directory my/org-calendar-settings-file))))
-    (when (file-readable-p settings)
+    (when (and my/org-tasks-sync-enabled (file-readable-p settings))
       (load (expand-file-name "org-tasks-sync.el" (file-name-directory my/org-calendar-auth-worker-file)) nil t)
       (condition-case nil (my/org-tasks-mode 1)
         (error (message "Personal Tasks automation awaits review; SPC n i opens Integrations")))

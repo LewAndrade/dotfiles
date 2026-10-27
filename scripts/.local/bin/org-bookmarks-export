@@ -23,6 +23,11 @@ CAPTURE = ("javascript:location.href='org-protocol://capture?url='"
            "+encodeURIComponent(location.href)+'&title='"
            "+encodeURIComponent(document.title)+'&body='"
            "+encodeURIComponent(window.getSelection())")
+def attr(url):
+    """Escape for an HREF without &#x27;: Chrome's importer keeps that entity as text."""
+    return html.escape(url, quote=False).replace('"', "&quot;")
+
+
 LINK = re.compile(r"\[\[(https?://[^\]]+)\]\[([^\]]+)\]\]")
 HEADING = re.compile(r"^(\*+) (.+?)\s*$")
 
@@ -61,7 +66,7 @@ def render(node, out, depth):
     pad = "    " * depth
     for url, name in node["links"]:
         label = f"{node['name']}: {name}" if node["name"] else name
-        out.append(f'{pad}<DT><A HREF="{html.escape(url)}">{html.escape(label)}</A>')
+        out.append(f'{pad}<DT><A HREF="{attr(url)}">{html.escape(label)}</A>')
     for child in node["children"]:
         if not child["links"] and not child["children"]:
             continue
@@ -78,7 +83,7 @@ def main():
            '<META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=UTF-8">',
            "<TITLE>Bookmarks</TITLE>", "<H1>Bookmarks</H1>", "<DL><p>",
            '<DT><H3 PERSONAL_TOOLBAR_FOLDER="true">Bookmarks bar</H3>', "<DL><p>",
-           f'    <DT><A HREF="{html.escape(CAPTURE)}">Org capture</A>']
+           f'    <DT><A HREF="{attr(CAPTURE)}">Org capture</A>']
     for path, root, folder in ROOTS:
         out.append(f"    <DT><H3>{folder}</H3>")
         out.append("    <DL><p>")
