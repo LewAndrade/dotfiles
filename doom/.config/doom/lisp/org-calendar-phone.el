@@ -1,7 +1,7 @@
 ;;; org-calendar-phone.el --- Read-only calendar copy for Bloom on the phone -*- lexical-binding: t; -*-
 
-;; Bloom ignores the timestamps that org-gcal keeps inside its `:org-gcal:'
-;; drawer, and a recurring series stores only its first date. This module
+;; A recurring series in calendar-personal.org stores only its first date and
+;; a Google RRULE, which Bloom cannot expand. This module
 ;; writes `calendar-phone.org': one heading per occurrence in a rolling
 ;; window, each with a bare active timestamp on the line Bloom reads. Emacs
 ;; owns the file and rewrites it, so edits made to it are lost. It is not an

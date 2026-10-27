@@ -1318,10 +1318,12 @@ Tasks and Work events are not mapped to Google. Private settings, encrypted
 tokens, and occurrence caches stay outside tracked repositories. Do not use raw
 =org-gcal-sync= / =org-gcal-fetch=: those bypass the automatic sync safeguards.
 Restart resumption and natural token expiry still need live verification.
-Bloom on the phone cannot read org-gcal's drawer timestamps, so
+Bloom on the phone cannot expand Google's recurrence rules, so
 =lisp/org-calendar-phone.el= keeps =calendar-phone.org=: a read-only copy of the
 personal calendar for the next 60 days, recurring events expanded, rewritten
-after every calendar save and every 10 minutes. It is not an agenda file.
+after every calendar save and every 10 minutes. It is not an agenda file. The
+phone gets this copy instead of =calendar-personal.org= (see the notes
+=.stignore=), so org-gcal stays the only writer of the synced file.
 Personal Google Tasks sync uses a separate private approval; Work-calendar
 integration is not connected. Tasks sync is off (=my/org-tasks-sync-enabled=)
 since Bloom on the phone took over tasks; set it to =t= to bring it back.
