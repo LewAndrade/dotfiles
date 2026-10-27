@@ -1047,19 +1047,55 @@ profile-labelled layout. Redraws preserve source actions and removable zoom.
             (goto-char beg)
             (forward-line 1)))))))
 
+(defun my/org-agenda-shorten-title (window from to room)
+  "Hide the end of the title between FROM and TO behind an ellipsis in WINDOW.
+ROOM is the pixel width the row may use before its tags. Display only: an
+overlay hides the text, so the row's text and source actions stay intact."
+  (let* ((bol (line-beginning-position))
+         (ellipsis (string-pixel-width "…"))
+         (low from) (high to))
+    ;; Binary search for the longest title prefix that still fits.
+    (while (< low high)
+      (let ((mid (/ (+ low high 1) 2)))
+        (if (<= (+ (car (window-text-pixel-size window bol mid)) ellipsis) room)
+            (setq low mid)
+          (setq high (1- mid)))))
+    (let ((overlay (make-overlay (max from low) to)))
+      (overlay-put overlay 'display "…")
+      (overlay-put overlay 'my/org-agenda-ellipsis t))))
+
 (defun my/org-agenda-align-tags ()
   "Right-align each row's tags to the window's text edge, measured in pixels.
 Org pads tags by counting characters, which overflows once margins and Org
-Modern's wider tag chips are involved; a display space never does."
-  (save-excursion
-    (save-match-data
-      (with-silent-modifications
-        (goto-char (point-min))
-        (while (re-search-forward
-                "\\([ \t]+\\)\\(:\\(?:[[:alnum:]_@#%]+:\\)+\\)[ \t]*$" nil t)
-          (let ((width (+ (string-pixel-width (match-string 2)) (frame-char-width))))
-            (put-text-property (match-beginning 1) (match-end 1)
-                               'display `(space :align-to (- right (,width))))))))))
+Modern's wider tag chips are involved; a display space never does. A title too
+long for its row is shortened with an ellipsis, so the tags stay whole."
+  (let ((window (car (get-buffer-window-list (current-buffer) nil t))))
+    (remove-overlays (point-min) (point-max) 'my/org-agenda-ellipsis t)
+    (save-excursion
+      (save-match-data
+        (with-silent-modifications
+          (goto-char (point-min))
+          (while (re-search-forward
+                  "\\([ \t]+\\)\\(:\\(?:[[:alnum:]_@#%]+:\\)+\\)[ \t]*$" nil t)
+            (let* ((gap-start (match-beginning 1))
+                   (width (+ (string-pixel-width (match-string 2)) (frame-char-width)))
+                   (title (text-property-any (line-beginning-position) gap-start
+                                             'org-heading t)))
+              (put-text-property gap-start (match-end 1)
+                                 'display `(space :align-to (- right (,width))))
+              (when (and window title)
+                (let ((room (- (window-body-width window t) width (frame-char-width))))
+                  (when (> (car (window-text-pixel-size
+                                 window (line-beginning-position) gap-start))
+                           room)
+                    (my/org-agenda-shorten-title window (1+ title) gap-start room))))
+              (goto-char (line-end-position)))))))))
+
+(defun my/org-agenda-realign-h (window)
+  "Re-place tags and ellipses after WINDOW, showing an agenda, changes size."
+  (with-current-buffer (window-buffer window)
+    (when (derived-mode-p 'org-agenda-mode)
+      (my/org-agenda-align-tags))))
 
 (defun my/org-agenda-style-buffer ()
   "Style the agenda without rewriting rows, source markers, or keymaps."
@@ -1067,6 +1103,10 @@ Modern's wider tag chips are involved; a display space never does."
     (require 'face-remap)
     (add-hook 'text-scale-mode-hook #'my/org-agenda-style-zoom-cookie nil t)
     (my/org-agenda-style-zoom-cookie)
+    ;; Solaire gives special buffers their own background; under Today's wide
+    ;; centering margins that showed as patches of two shades.
+    (when (bound-and-true-p solaire-mode) (solaire-mode -1))
+    (add-hook 'window-size-change-functions #'my/org-agenda-realign-h nil t)
     (setq-local line-spacing 0.10
                 left-margin-width 2
                 right-margin-width 2
