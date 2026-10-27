@@ -517,10 +517,11 @@ Events are refused: Google events must not gain a TODO state or tags unseen."
   "Keys that close the menu; every other key keeps it open while you move.")
 
 (defun my/org-calendar-view--menu-layout ()
-  "Build the transient layout: one column per key group, side by side."
-  (vector
-   :description "Week view · SPC n v"
-   (apply #'vector
+  "Build the transient layout: one column per key group, side by side.
+The titled group holds the columns directly; a group wrapped in another group
+nests columns inside columns, which transient cannot draw."
+  (apply #'vector
+         :description "Week view · SPC n v"
           (mapcar (lambda (group)
                     (apply #'vector (car group)
                            (delq nil
@@ -530,7 +531,7 @@ Events are refused: Google events must not gain a TODO state or tags unseen."
                                                    :transient (not (member (nth 0 entry)
                                                                            my/org-calendar-view--sticky-keys)))))
                                          (cdr group)))))
-                  my/org-calendar-view-key-groups))))
+                  my/org-calendar-view-key-groups)))
 
 (defun my/org-calendar-view-help ()
   "Show the week view's keys as a which-key style menu; keys run from it too."

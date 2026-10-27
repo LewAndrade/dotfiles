@@ -437,6 +437,12 @@
     (should (member "Edit" groups))
     (should (equal (aref layout 0) :description))
     (should (equal (aref layout 1) "Week view · SPC n v"))
+    ;; Each column is a titled group of key entries, never a group of groups.
+    (should (= (- (length layout) 2) (length groups)))
+    (dolist (column (append (seq-drop layout 2) nil))
+      (should (vectorp column))
+      (should (stringp (aref column 0)))
+      (should (seq-every-p #'listp (seq-drop column 1))))
     (eval `(transient-define-prefix my/org-calendar-view-test-menu ()
              "Week view keys."
              ,layout)
