@@ -17,12 +17,14 @@ rm -rf "$APP"
 # The URL is percent-encoded by the bookmarklet, so it holds no double quote or
 # backslash and is safe inside an Elisp string. macOS stops an app taking focus
 # on its own, so once Emacs has made the capture frame its focused window, this
-# applet activates Emacs, by path so a second Emacs install is never launched.
+# applet brings Emacs forward with `open -a', like clicking its Dock icon: no
+# Automation permission needed. By path, so a second Emacs is never launched.
 osacompile -o "$APP" <<EOF
 on open location theURL
-	do shell script "$EMACSCLIENT -n -e " & quoted form of ("(my/org-protocol-capture-frame \\"" & theURL & "\\")")
+	-- In the background: the capture menu waits for a key, and focus must come first.
+	do shell script "$EMACSCLIENT -n -e " & quoted form of ("(my/org-protocol-capture-frame \\"" & theURL & "\\")") & " >/dev/null 2>&1 &"
 	delay 0.3
-	tell application "$EMACS_APP" to activate
+	do shell script "/usr/bin/open -a " & quoted form of "$EMACS_APP"
 end open location
 EOF
 
