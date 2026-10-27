@@ -378,7 +378,9 @@ Copies of existing entries are not supported."
                 (org-timegrid-org-capture-template (cadr spec)))
             (org-timegrid-org--create-event title start end nil nil time-kind))))))))
 
-(defvar my/org-calendar-view--backend
+;; `defconst', not `defvar': reloading this file must install the current
+;; callbacks, or a running Emacs keeps a stale backend that refuses drags.
+(defconst my/org-calendar-view--backend
   (org-timegrid-backend-create :name "Org week"
                               :list-function #'my/org-calendar-view--list
                               :visit-function #'my/org-calendar-view--visit
@@ -565,6 +567,10 @@ Events are refused: Google events must not gain a TODO state or tags unseen."
   (pcase-dolist (`(,key . ,command) my/org-calendar-view-keys)
     (keymap-set (current-local-map) key command))
   (when (fboundp 'evil-emacs-state) (evil-emacs-state))
+  ;; Emacs's own cursor would box a whole hour slice of the image; the grid
+  ;; draws its own cursor.
+  (setq-local evil-emacs-state-cursor '(nil))
+  (setq cursor-type nil)
   (when (fboundp 'my/org-calendar-auto--finish)
     (advice-add 'my/org-calendar-auto--finish :after #'my/org-calendar-view-refresh-visible))
   (message "Week: hjkl move, c create, e/t/d edit, u undo, RET opens, ? keys"))
