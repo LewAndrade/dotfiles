@@ -187,39 +187,53 @@
         (with-current-buffer buffer (org-timegrid--refresh-data))
       (error (message "Week view could not refresh: %s" (error-message-string err))))))
 
+(defconst my/org-calendar-view-key-groups
+  '(("Move"
+     ("j" org-timegrid-cursor-forward "15 minutes later")
+     ("k" org-timegrid-cursor-backward "15 minutes earlier")
+     ("h" org-timegrid-cursor-backward-day "previous day")
+     ("l" org-timegrid-cursor-forward-day "next day")
+     ("C-d" org-timegrid-cursor-page-down "page down")
+     ("C-u" org-timegrid-cursor-page-up "page up")
+     ("0" org-timegrid-cursor-day-start "start of the day")
+     ("$" org-timegrid-cursor-day-end "end of the day"))
+    ("Events"
+     ("w" org-timegrid-next-block "next event")
+     ("b" org-timegrid-previous-block "previous event")
+     ("RET" org-timegrid-open-at-cursor "open the event's Org entry")
+     ("/" org-timegrid-isearch-forward "search event titles"))
+    ("Weeks"
+     ("H" org-timegrid-previous-week "previous week")
+     ("L" org-timegrid-next-week "next week")
+     ("[" org-timegrid-previous-week "previous week")
+     ("]" org-timegrid-next-week "next week")
+     ("." org-timegrid-goto-today "this week")
+     ("D" org-timegrid-goto-date "go to a date"))
+    ("View"
+     ("F" my/org-calendar-view-filter "show Work, Personal, or both")
+     ("r" org-timegrid-refresh "reload")
+     ("?" my/org-calendar-view-help "this help")
+     ("q" quit-window "close")))
+  "Keys of the read-only week, grouped as `my/org-calendar-view-help' shows them.")
+
 (defconst my/org-calendar-view-keys
-  '(("j" . org-timegrid-cursor-forward)
-    ("k" . org-timegrid-cursor-backward)
-    ("h" . org-timegrid-cursor-backward-day)
-    ("l" . org-timegrid-cursor-forward-day)
-    ("w" . org-timegrid-next-block)
-    ("b" . org-timegrid-previous-block)
-    ("C-d" . org-timegrid-cursor-page-down)
-    ("C-u" . org-timegrid-cursor-page-up)
-    ("0" . org-timegrid-cursor-day-start)
-    ("$" . org-timegrid-cursor-day-end)
-    ("H" . org-timegrid-previous-week)
-    ("L" . org-timegrid-next-week)
-    ("[" . org-timegrid-previous-week)
-    ("]" . org-timegrid-next-week)
-    ("." . org-timegrid-goto-today)
-    ("D" . org-timegrid-goto-date)
-    ("r" . org-timegrid-refresh)
-    ("/" . org-timegrid-isearch-forward)
-    ("RET" . org-timegrid-open-at-cursor)
-    ("F" . my/org-calendar-view-filter)
-    ("?" . my/org-calendar-view-help)
-    ("q" . quit-window))
-  "Keys of the read-only week, in the order `my/org-calendar-view-help' lists them.")
+  (mapcan (lambda (group)
+            (mapcar (lambda (entry) (cons (nth 0 entry) (nth 1 entry))) (cdr group)))
+          my/org-calendar-view-key-groups)
+  "Key and command pairs bound in the read-only week.")
 
 (defun my/org-calendar-view-help ()
-  "List the week view's keys."
+  "List the week view's keys, grouped."
   (interactive)
   (with-help-window "*Week keys*"
-    (princ "Read-only week (SPC n v)\n\n")
-    (pcase-dolist (`(,key . ,command) my/org-calendar-view-keys)
-      (princ (format "  %-5s %s\n" key
-                     (car (split-string (or (documentation command) (symbol-name command)) "\n")))))))
+    (with-current-buffer standard-output
+      (insert (propertize "Week view" 'face 'bold) "  "
+              (propertize "read only · SPC n v" 'face 'shadow) "\n")
+      (dolist (group my/org-calendar-view-key-groups)
+        (insert "\n" (propertize (car group) 'face 'font-lock-keyword-face) "\n")
+        (dolist (entry (cdr group))
+          (insert "  " (propertize (format "%-4s" (nth 0 entry)) 'face 'help-key-binding)
+                  "  " (nth 2 entry) "\n"))))))
 
 ;;;###autoload
 (defun my/org-calendar-week ()

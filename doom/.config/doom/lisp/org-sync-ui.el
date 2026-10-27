@@ -299,9 +299,11 @@
     (goto-char (min position (point-max)))))
 
 (defun my/org-sync-ui--select (kind)
+  ;; A KIND that no longer exists (Tasks, before its removal) falls back to Calendar.
+  (unless (memq kind '(calendar)) (setq kind 'calendar))
   (setq my/org-sync-ui--selected kind)
   (my/org-sync-ui-refresh)
-  (goto-char (alist-get kind my/org-sync-ui--sections)))
+  (goto-char (or (alist-get kind my/org-sync-ui--sections) (point-min))))
 
 (defvar my/org-sync-ui-mode-map
   (let ((map (make-sparse-keymap)))
