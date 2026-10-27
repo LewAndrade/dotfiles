@@ -38,7 +38,7 @@ emacs -Q --batch \
 The suite loads the workflow, automatic Calendar sync, Keychain, recurrence, graphical
 week, and status-icon tests. A successful run ends with `0 unexpected`.
 It checks primary-ID approval, Work isolation, conflict handling, recurring
-edit scope, read-only week data, compact Today versus full-width Review, zoom
+edit scope, week data and editing (create, move, rename, cancel, undo, refusals), compact Today versus full-width Review, zoom
 cleanup, and status visibility and mouse bindings.
 The shared UI checks the named badge, its click target, selective hover help,
 display-only refresh, panel actions, paused-sync guards, safe error reporting,

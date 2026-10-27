@@ -1408,16 +1408,32 @@ per Emacs session. Background refresh never opens a browser or prompts.
 Recurring series use one stored heading plus a private dated-occurrence cache.
 Agenda =, e= chooses occurrence/series edit scope; whole-series writes need approval.
 
-=SPC n v= opens a separate read-only graphical week in the main window, not a
+=SPC n v= opens a separate graphical week in the main window, not a
 popup. It combines central events, scheduled tasks, deadline date markers, and
 cached Google occurrences with pending occurrence changes. Deadlines do not
 reserve time; undated tasks remain in Review. Keys are vim-style: =j=/=k= move
 through the day, =h=/=l= change day, =w=/=b= jump to the next/previous event,
 =H=/=L= (or =[= / =]=) change week, =.= returns to today, =D= picks a date, =F=
-filters Both/Work/Personal, =RET= visits the source, =?= lists every key, and
-=q= closes. =M-SPC= opens the Doom leader. A recurring occurrence visits its
-shared series heading; use agenda =, e= for an occurrence edit. The view needs
-graphical SVG support and uses a pinned =org-timegrid= with no mutation callbacks.
+filters Both/Work/Personal, =RET= visits the source (or creates on an empty
+slot), =?= lists every key, and =q= closes. =M-SPC= opens the Doom leader.
+
+Org items are editable. Drag, =M-arrows=, =S-arrows= and =C-S-arrows= move and
+resize; =e= renames, =t= changes the time, =d= removes, =u= and =C-r= undo and
+redo, =J=/=K= and =<=/=>= nudge by 15 minutes or a day. Creating (drag on empty
+space, =c=, or =RET= on an empty slot) asks for one key first: =e= personal
+event (Google), =w= work event (local), =t= work task, =p= personal task, =q=
+cancel. Events go to =calendar-personal.org= / =calendar-work.org=; tasks go to
+the Inbox of =work.org= / =personal.org= with a =SCHEDULED= range. Edits save the
+file at once, so a personal event edit syncs to Google like any other save.
+Removing a personal event cancels it (state =CANCELLED=, after a confirmation)
+instead of deleting it. Google recurring occurrences and deadline markers
+stay read-only and say where to edit them; a recurring series, a repeating Org
+entry, or a personal event with an unsaved buffer is refused. Copy, cut and
+paste, refile and notes are not available here; the task keys =C-c C-t=, =:=,
+=,=, =i=, =O= and =C-c C-x e= work on tasks only. A recurring occurrence visits
+its shared series heading; use agenda =, e= for an occurrence edit. The view
+needs graphical SVG support and uses a pinned =org-timegrid=; its backend wraps
+the Org backend's edit functions in =lisp/org-calendar-view.el=.
 
 Personal sync uses a named badge, =[Cal ✓]=, in agenda,
 graphical-week, source, and control buffers. Elsewhere they stay hidden unless
@@ -1519,7 +1535,7 @@ See [[file:tests/README.md][Org workflow checks]] for safe regression-test comma
 
 (autoload 'my/org-calendar-week
   (expand-file-name "org-calendar-view.el" (file-name-directory my/org-calendar-auth-worker-file))
-  "Open the read-only SVG week." t)
+  "Open the editable SVG week." t)
 
 (autoload 'my/org-sync-open
   (expand-file-name "org-sync-ui.el" (file-name-directory my/org-calendar-auth-worker-file))
@@ -1815,7 +1831,18 @@ See [[file:tests/README.md][Org workflow checks]] for safe regression-test comma
       "n g" nil
       "n T" nil
       :desc "Integrations" "n i" #'my/org-sync-open
-      :desc "Visual week (read only)" "n v" #'my/org-calendar-week)
+      :desc "Visual week" "n v" #'my/org-calendar-week)
+
+;; `?' in an agenda opens a which-key style menu of its keys; see the file.
+(after! evil-org-agenda
+  (load (expand-file-name "org-agenda-help.el" (file-name-directory my/org-calendar-auth-worker-file)) nil t))
+
+;; SPC ? shows the prefixes available in any buffer: the place to start when
+;; you do not know where a command lives. which-key explains each prefix after.
+(autoload 'my/which-key-prefixes-here
+  (expand-file-name "which-key-here.el" (file-name-directory my/org-calendar-auth-worker-file))
+  "Show the prefix keys available in this buffer." t)
+(map! :leader :desc "Prefixes here" "?" #'my/which-key-prefixes-here)
 
 (defun my/org-agenda-strip-backend-a (fn &rest args)
   "Draw org-timegrid's agenda strip from the week view's data, repeats included."
@@ -1824,7 +1851,7 @@ See [[file:tests/README.md][Org workflow checks]] for safe regression-test comma
 
 (defun my/org-agenda-strip-setup ()
   "Show org-timegrid's timeline strip at the top of graphical agendas.
-It reads the read-only week view's backend, so Google repeats appear, and runs
+It reads the week view's backend, so Google repeats appear, and runs
 after `my/org-agenda-style-buffer' so it fits Today's centred column."
   (when (and (display-graphic-p) (require 'org-timegrid-agenda nil t))
     (setq org-timegrid-agenda-insert-after nil
