@@ -7,6 +7,7 @@ set -eu
 
 APP="$HOME/Applications/OrgProtocol.app"
 EMACSCLIENT="${EMACSCLIENT:-/opt/homebrew/bin/emacsclient}"
+EMACS_APP="${EMACS_APP:-/Applications/Emacs.app}"
 PLIST="$APP/Contents/Info.plist"
 LSREGISTER=/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister
 
@@ -14,11 +15,14 @@ mkdir -p "$HOME/Applications"
 rm -rf "$APP"
 
 # The URL is percent-encoded by the bookmarklet, so it holds no double quote or
-# backslash and is safe inside an Elisp string. Emacs focuses only the new
-# capture frame, so the main window stays where it is.
+# backslash and is safe inside an Elisp string. macOS stops an app taking focus
+# on its own, so once Emacs has made the capture frame its focused window, this
+# applet activates Emacs, by path so a second Emacs install is never launched.
 osacompile -o "$APP" <<EOF
 on open location theURL
 	do shell script "$EMACSCLIENT -n -e " & quoted form of ("(my/org-protocol-capture-frame \\"" & theURL & "\\")")
+	delay 0.3
+	tell application "$EMACS_APP" to activate
 end open location
 EOF
 
