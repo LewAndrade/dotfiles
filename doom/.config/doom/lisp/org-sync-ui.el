@@ -16,17 +16,6 @@
 (defvar my/org-calendar-login-process)
 (defvar my/org-calendar-keychain-enabled)
 (defvar my/org-calendar-repeat--pending)
-(defvar my/org-tasks-mode)
-(defvar my/org-tasks-status)
-(defvar my/org-tasks--scope)
-(defvar my/org-tasks--file)
-(defvar my/org-tasks--busy)
-(defvar my/org-tasks--error)
-(defvar my/org-tasks--state)
-(defvar my/org-tasks--last-run)
-(defvar my/org-tasks--last-success)
-(defvar my/org-tasks-auth-problem)
-(defvar my/org-tasks-access-error-reasons)
 
 (declare-function org-map-entries "org" (func &optional match scope &rest skip))
 (declare-function org-entry-get "org" (pom property &optional inherit literal-nil))
@@ -38,16 +27,6 @@
 (declare-function my/org-calendar-keychain-enable "org-calendar-keychain" ())
 (declare-function my/org-calendar-keychain-disable "org-calendar-keychain" ())
 (declare-function my/org-calendar-status-context-p "org-calendar-status" ())
-(declare-function my/org-tasks-sync-now "org-tasks-sync" ())
-(declare-function my/org-tasks-mode "org-tasks-sync" (&optional arg))
-(declare-function my/org-tasks-review "org-tasks-sync" ())
-(declare-function my/org-tasks-setup "org-tasks-access" (&optional force))
-(declare-function my/org-tasks-block-link "org-tasks-blocks" ())
-(declare-function my/org-tasks-block-unlink "org-tasks-blocks" (&optional key expected-link))
-(declare-function my/org-tasks-block-visit "org-tasks-blocks" (&optional key))
-(declare-function my/org-tasks-block--read "org-tasks-blocks" ())
-(declare-function my/org-tasks-block--sources "org-tasks-blocks" (kind))
-(declare-function my/org-tasks-block--pair "org-tasks-blocks" (link tasks blocks &optional approving))
 (declare-function evil-set-initial-state "evil-core" (mode state))
 
 (defconst my/org-sync-ui--buffer "*Personal Sync*")
@@ -62,43 +41,31 @@
   (when-let* ((buffer (and file (get-file-buffer file))))
     (buffer-modified-p buffer)))
 
-(defun my/org-sync-ui--authorizing-p (kind)
+(defun my/org-sync-ui--authorizing-p ()
   (when-let* ((process (bound-and-true-p my/org-calendar-login-process)))
     (and (process-live-p process)
-         (string-prefix-p (if (eq kind 'tasks) "org-tasks-" "org-calendar-")
-                          (process-name process)))))
+         (string-prefix-p "org-calendar-" (process-name process)))))
 
 (defun my/org-sync-ui--snapshot (kind)
   "Read KIND's status without starting sync, loading settings, or opening files."
-  (let* ((tasks (eq kind 'tasks))
-         (name (if tasks "Tasks" "Calendar"))
-         (configured (if tasks (bound-and-true-p my/org-tasks--scope)
-                       (bound-and-true-p my/org-calendar-auto--file)))
-         (enabled (if tasks (bound-and-true-p my/org-tasks-mode)
-                    (bound-and-true-p my/org-calendar-auto-mode)))
-         (status (if tasks (bound-and-true-p my/org-tasks-status)
-                   (bound-and-true-p my/org-calendar-auto-status)))
-         (error-text (if tasks (bound-and-true-p my/org-tasks--error)
-                       (bound-and-true-p my/org-calendar-auto--last-error)))
-         (busy (if tasks (bound-and-true-p my/org-tasks--busy)
-                 (bound-and-true-p my/org-calendar-auto--busy)))
-         (file (if tasks (bound-and-true-p my/org-tasks--file)
-                 (bound-and-true-p my/org-calendar-auto--file)))
-         (authorizing (my/org-sync-ui--authorizing-p kind))
-         (auth-problem (if tasks (bound-and-true-p my/org-tasks-auth-problem)
-                         (bound-and-true-p my/org-calendar-auth-problem)))
-         (permission (and tasks
-                          (member "ACCESS_TOKEN_SCOPE_INSUFFICIENT"
-                                  (bound-and-true-p my/org-tasks-access-error-reasons))))
+  (let* ((name "Calendar")
+         (configured (bound-and-true-p my/org-calendar-auto--file))
+         (enabled (bound-and-true-p my/org-calendar-auto-mode))
+         (status (bound-and-true-p my/org-calendar-auto-status))
+         (error-text (bound-and-true-p my/org-calendar-auto--last-error))
+         (busy (bound-and-true-p my/org-calendar-auto--busy))
+         (file (bound-and-true-p my/org-calendar-auto--file))
+         (authorizing (my/org-sync-ui--authorizing-p))
+         (auth-problem (bound-and-true-p my/org-calendar-auth-problem))
          (state (cond (authorizing 'authorizing)
                       ((and (not configured) error-text) 'error)
                       ((and (not configured)
-                            (not (featurep (if tasks 'org-tasks-sync 'org-calendar-auto)))) 'unloaded)
+                            (not (featurep 'org-calendar-auto))) 'unloaded)
                       ((not configured) 'unconfigured)
                       ((not enabled) 'paused)
                       (busy 'syncing)
                       ((equal status "needs login") 'login)
-                      ((equal status "needs attention") (if permission 'permission 'error))
+                      ((equal status "needs attention") 'error)
                       ((and (equal status "pending")
                             (or error-text (memq auth-problem '(temporary keychain)))) 'retrying)
                       ((and (equal status "pending") (my/org-sync-ui--source-modified-p file)) 'unsaved)
@@ -112,12 +79,11 @@
                              (unsaved "Waiting for save" "…" warning)
                              (retrying "Retrying" "↻" warning)
                              (login "Sign-in needed" "!" warning)
-                             (permission "Permission needed" "!" error)
                              (error "Needs attention" "!" error)
                              (paused "Paused" "Ⅱ" shadow)
                              (unloaded "Not started" "?" shadow)
                              (unconfigured "Not configured" "?" shadow)))))
-    (list :kind kind :name name :short (if tasks "Tasks" "Cal")
+    (list :kind kind :name name :short "Cal"
           :configured configured :enabled enabled :state state
           :label (nth 1 spec) :symbol (nth 2 spec) :face (nth 3 spec)
           :authorizing authorizing :error error-text
@@ -141,10 +107,8 @@
                              ('keychain "Keychain unlock is unavailable. Check Keychain setup in the action menu.")
                              (_ (if (eq state 'login) "Sign in to the approved personal Google account."
                                   "Review conflicts or event validation errors in Details."))))))
-          :attempt (if tasks (bound-and-true-p my/org-tasks--last-run)
-                     (bound-and-true-p my/org-calendar-auto--last-run))
-          :success (if tasks (bound-and-true-p my/org-tasks--last-success)
-                     (bound-and-true-p my/org-calendar-auto--last-success)))))
+          :attempt (bound-and-true-p my/org-calendar-auto--last-run)
+          :success (bound-and-true-p my/org-calendar-auto--last-success))))
 
 (defun my/org-sync-ui--time (time)
   (if (and (numberp time) (> time 0))
@@ -212,77 +176,35 @@
      'help-echo (lambda (_window _object _position) (my/org-sync-ui--tooltip kind)))))
 
 (defun my/org-sync-ui-render ()
-  "Render two named, separately clickable badges in one stable modeline group."
+  "Render the named, clickable Calendar badge in the modeline."
   (let* ((calendar (my/org-sync-ui--snapshot 'calendar))
-         (tasks (my/org-sync-ui--snapshot 'tasks))
-         (problem (cl-some (lambda (info)
-                             (memq (plist-get info :state) '(login permission error retrying)))
-                           (list calendar tasks))))
+         (problem (memq (plist-get calendar :state) '(login error retrying))))
     (when (or problem
               (derived-mode-p 'org-agenda-mode 'org-timegrid-mode)
-              (member (buffer-name) (list my/org-sync-ui--buffer "*Personal Tasks Sync*"
-                                         "*Personal Tasks Setup*" "*Personal Calendar Sync*"
+              (member (buffer-name) (list my/org-sync-ui--buffer "*Personal Calendar Sync*"
                                          "*Personal Calendar Authorization*"))
               (and (fboundp 'my/org-calendar-status-context-p)
-                   (my/org-calendar-status-context-p))
-              (and buffer-file-name (not (file-remote-p buffer-file-name))
-                   (bound-and-true-p my/org-tasks--file)
-                   (equal (file-truename buffer-file-name) my/org-tasks--file)))
-      (when (or problem (plist-get calendar :configured) (plist-get tasks :configured))
-        (concat (my/org-sync-ui--badge 'calendar) (propertize " | " 'face 'shadow)
-                (my/org-sync-ui--badge 'tasks))))))
+                   (my/org-calendar-status-context-p)))
+      (when (or problem (plist-get calendar :configured))
+        (my/org-sync-ui--badge 'calendar)))))
 
 (defun my/org-sync-ui--issue-count (kind)
   "Count existing review items only when building the panel, not on redisplay."
-  (if (eq kind 'tasks)
-      (cl-count-if (lambda (record) (plist-get record :issue))
-                   (plist-get (bound-and-true-p my/org-tasks--state) :records))
-    (let ((count (cl-count-if (lambda (job) (plist-get job :conflict))
-                              (bound-and-true-p my/org-calendar-repeat--pending)))
-          (buffer (and (bound-and-true-p my/org-calendar-auto--file)
-                       (get-file-buffer my/org-calendar-auto--file))))
-      (when buffer
-        (with-current-buffer buffer
-          (save-excursion
-            (save-restriction
-              (widen)
-              (org-map-entries
-               (lambda ()
-                 (when (or (org-entry-get nil "GCAL_AUTO_ERROR")
-                           (org-entry-get nil "GCAL_AUTO_CONFLICT"))
-                   (cl-incf count))) nil 'file)))))
-      count)))
-
-(defun my/org-sync-ui--blocks-ready-p ()
-  "Check availability without loading helpers or reading source files."
-  (and (bound-and-true-p my/org-tasks--scope)
-       (bound-and-true-p my/org-calendar-auto--file)
-       (fboundp 'my/org-tasks-block--read)))
-
-(defun my/org-sync-ui--pick-block-link (action)
-  "Let the user choose an exact saved task/block link for ACTION."
-  (let* ((links (my/org-tasks-block--read))
-         (tasks (and links (my/org-tasks-block--sources 'task)))
-         (blocks (and links (my/org-tasks-block--sources 'block)))
-         (index 0)
-         (choices
-          (mapcar
-           (lambda (link)
-             (let* ((pair (my/org-tasks-block--pair link tasks blocks))
-                    (label (format "%d. %s / %s [%s]"
-                                   (cl-incf index)
-                                   (or (plist-get (plist-get pair :task) :title) "Unavailable task")
-                                   (or (plist-get (plist-get pair :block) :title) "Unavailable Calendar block")
-                                   (or (plist-get pair :stamp) (plist-get pair :reason) "linked"))))
-               (cons label link))) links)))
-    (unless choices (user-error "No task/time-block links are saved yet"))
-    (let* ((choice (completing-read (format "Task whose block to %s: " action) choices nil t))
-           (link (cdr (assoc choice choices)))
-           (current (cl-find (plist-get link :key) (my/org-tasks-block--read)
-                             :key (lambda (item) (plist-get item :key)) :test #'equal)))
-      (unless (and link (equal link current))
-        (user-error "The link changed while choosing; reopen the picker"))
-      link)))
+  (let ((count (cl-count-if (lambda (job) (plist-get job :conflict))
+                            (bound-and-true-p my/org-calendar-repeat--pending)))
+        (buffer (and (bound-and-true-p my/org-calendar-auto--file)
+                     (get-file-buffer my/org-calendar-auto--file))))
+    (when buffer
+      (with-current-buffer buffer
+        (save-excursion
+          (save-restriction
+            (widen)
+            (org-map-entries
+             (lambda ()
+               (when (or (org-entry-get nil "GCAL_AUTO_ERROR")
+                         (org-entry-get nil "GCAL_AUTO_CONFLICT"))
+                 (cl-incf count))) nil 'file)))))
+    count))
 
 (defun my/org-sync-ui--act (action kind)
   "Perform one explicit ACTION for KIND using the existing guarded commands."
@@ -291,38 +213,24 @@
       ('sync
        (unless (and (plist-get info :configured) (plist-get info :enabled))
          (user-error "Configure and resume %s sync first" (plist-get info :name)))
-       (if (eq kind 'tasks) (my/org-tasks-sync-now)
-         ;; Never call the legacy fetch command, which has a paused-mode bypass.
-         (my/org-calendar-auto--schedule)))
+       ;; Never call the legacy fetch command, which has a paused-mode bypass.
+       (my/org-calendar-auto--schedule))
       ('authorize
        (when (and (bound-and-true-p my/org-calendar-login-process)
                   (process-live-p my/org-calendar-login-process))
          (user-error "Google sign-in is already running; finish or cancel it first"))
-       (if (eq kind 'tasks)
-           (my/org-tasks-setup
-            (member "ACCESS_TOKEN_SCOPE_INSUFFICIENT"
-                    (bound-and-true-p my/org-tasks-access-error-reasons)))
-         (my/org-calendar-login)))
+       (my/org-calendar-login))
       ('pause
        (unless (plist-get info :configured) (user-error "Configure this integration first"))
-       (funcall (if (eq kind 'tasks) #'my/org-tasks-mode #'my/org-calendar-auto-mode)
-                (if (plist-get info :enabled) -1 1)))
+       (my/org-calendar-auto-mode (if (plist-get info :enabled) -1 1)))
       ('details
        (unless (plist-get info :configured) (user-error "Private account approval is not configured yet"))
-       (if (eq kind 'tasks) (my/org-tasks-review) (my/org-calendar-auto-review)))
+       (my/org-calendar-auto-review))
       ('cancel
        (unless (plist-get info :authorizing) (user-error "This integration has no sign-in to cancel"))
        (my/org-calendar-stop-login))
       ('keychain (my/org-calendar-keychain-enable))
-      ('keychain-forget (my/org-calendar-keychain-disable))
-      ((or 'block-link 'block-unlink 'block-visit)
-       (unless (my/org-sync-ui--blocks-ready-p)
-         (user-error "Initialize Personal Tasks and Calendar before managing time-block links"))
-       (if (eq action 'block-link) (my/org-tasks-block-link)
-         (let ((link (my/org-sync-ui--pick-block-link (if (eq action 'block-unlink) "unlink" "visit"))))
-           (if (eq action 'block-unlink)
-               (my/org-tasks-block-unlink (plist-get link :key) link)
-             (my/org-tasks-block-visit (plist-get link :key)))))))
+      ('keychain-forget (my/org-calendar-keychain-disable)))
     (my/org-sync-ui--changed)))
 
 (defun my/org-sync-ui-sync ()
@@ -353,9 +261,9 @@
     (erase-buffer)
     (setq my/org-sync-ui--sections nil)
     (insert (propertize "Personal sync\n" 'face 'bold)
-            "c Calendar   t Tasks   s Sync   a Authorize   p Pause/resume   d Details\n"
+            "c Calendar   s Sync   a Authorize   p Pause/resume   d Details\n"
             "g Refresh display   TAB Next button   q Close\n\n")
-    (dolist (kind '(calendar tasks))
+    (dolist (kind '(calendar))
       (let* ((info (my/org-sync-ui--snapshot kind))
              (issues (my/org-sync-ui--issue-count kind)))
         (push (cons kind (point)) my/org-sync-ui--sections)
@@ -385,17 +293,8 @@
           (when (fboundp 'my/org-calendar-keychain-disable)
             (my/org-sync-ui--button "Forget unlock..." 'keychain-forget 'calendar)))
       (insert "Open your Org agenda to initialize Keychain settings."))
-    (insert "\nThe unlock is shared; Google authorization stays separate.\n\n"
-            (propertize "Local time-block links" 'face 'bold) "  ")
-    (if (my/org-sync-ui--blocks-ready-p)
-        (progn
-          (my/org-sync-ui--button "Link..." 'block-link 'tasks)
-          (my/org-sync-ui--button "Visit..." 'block-visit 'tasks)
-          (my/org-sync-ui--button "Unlink..." 'block-unlink 'tasks))
-      (insert "Initialize Personal Tasks and Calendar first."))
-    (insert "\nChoose a task in the picker. Links change local display only, not Google.\n\n")
+    (insert "\nThe unlock is shared; Google authorization stays separate.\n\n")
     (insert (propertize "Personal only. Work stays local.\n" 'face 'shadow)
-            "Calendar and Tasks keep separate authorization and conflict reviews.\n"
             "Opening this panel does not sync, save files, or start sign-in.\n")
     (goto-char (min position (point-max)))))
 
@@ -408,7 +307,6 @@
   (let ((map (make-sparse-keymap)))
     (set-keymap-parent map special-mode-map)
     (define-key map (kbd "c") (lambda () (interactive) (my/org-sync-ui--select 'calendar)))
-    (define-key map (kbd "t") (lambda () (interactive) (my/org-sync-ui--select 'tasks)))
     (define-key map (kbd "s") #'my/org-sync-ui-sync)
     (define-key map (kbd "a") #'my/org-sync-ui-authorize)
     (define-key map (kbd "p") #'my/org-sync-ui-pause)
@@ -419,11 +317,11 @@
     map))
 
 (define-derived-mode my/org-sync-ui-mode special-mode "Personal Sync"
-  "Inspect both Personal integrations; actions always require an explicit command."
+  "Inspect the Personal Calendar integration; actions always require an explicit command."
   (setq-local truncate-lines nil))
 
 (defun my/org-sync-ui-fit-window (window)
-  "Fit both integration sections, using at most half of WINDOW's frame."
+  "Fit the integration section, using at most half of WINDOW's frame."
   (let ((maximum (max window-min-height
                       (floor (* 0.5 (frame-height (window-frame window)))))))
     (fit-window-to-buffer window maximum (min 10 maximum))))
@@ -486,25 +384,24 @@
                (my/org-sync-ui--changed)))))
 
 (defun my/org-sync-ui--after-load (file)
-  (when (string-match-p "/org-\\(?:calendar-\\(?:auto\\|status\\|keychain\\)\\|tasks-\\(?:sync\\|access\\|blocks\\)\\)\\.elc?\\'" file)
+  (when (string-match-p "/org-\\(?:calendar-\\(?:auto\\|status\\|keychain\\)\\)\\.elc?\\'" file)
     (my/org-sync-ui-install)))
 
 (defun my/org-sync-ui-install ()
-  "Replace the two anonymous icons and install selective native hover help."
+  "Replace the anonymous icons and install selective native hover help."
   (setq global-mode-string
         (cl-remove-if
          (lambda (entry)
            (member entry (list '(:eval (my/org-calendar-status-render))
-                               '(:eval (my/org-tasks-status-render))
                                'my/org-calendar-status-mode-line my/org-sync-ui--modeline)))
          global-mode-string))
   (add-to-list 'global-mode-string my/org-sync-ui--modeline t)
   (unless (eq show-help-function #'my/org-sync-ui--show-help)
     (setq my/org-sync-ui--previous-help-function show-help-function
           show-help-function #'my/org-sync-ui--show-help))
-  (dolist (function '(my/org-calendar-auto--status my/org-tasks--status
-                      my/org-calendar-login-sentinel my/org-tasks-login-sentinel
-                      my/org-tasks-access-fail my/org-calendar-keychain-disable))
+  (dolist (function '(my/org-calendar-auto--status
+                      my/org-calendar-login-sentinel
+                      my/org-calendar-keychain-disable))
     (when (fboundp function)
       (advice-add function :after #'my/org-sync-ui--changed)))
   (when (fboundp 'my/org-calendar-keychain--process)

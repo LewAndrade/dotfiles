@@ -14,8 +14,6 @@
 (declare-function my/org-calendar-repeat--series-marker "org-calendar-repeat" (id))
 (declare-function my/org-calendar-repeat--ensure-state "org-calendar-repeat" ())
 (declare-function my/org-calendar-auto--same-file-p "org-calendar-auto" (file))
-(declare-function my/org-tasks-block--pairs "org-tasks-blocks" ())
-(defvar my/org-tasks-block-mode)
 (defvar my/org-calendar-auto--calendar)
 (defvar my/org-calendar-id)
 (defvar my/org-calendar-repeat--events)
@@ -67,31 +65,7 @@
                   (format "%s %s" state (org-timegrid-event-title event))))
           (setf (org-timegrid-event-source event) (my/org-calendar-view--source marker))
           (push event result))))
-    (my/org-calendar-view--task-blocks (nreverse result) start end)))
-
-(defun my/org-calendar-view--task-blocks (events start end)
-  "Show confirmed task/block pairs once, using task state and navigation."
-  (if (not (and (bound-and-true-p my/org-tasks-block-mode) (fboundp 'my/org-tasks-block--pairs))) events
-    (let ((pairs (seq-remove (lambda (pair) (plist-get pair :reason)) (my/org-tasks-block--pairs))))
-      (dolist (pair pairs)
-        (let* ((task (plist-get pair :task)) (marker (plist-get task :marker))
-               (block (plist-get (plist-get pair :block) :marker))
-               (state (plist-get task :state))
-               (from (my/org-calendar-view--google-minute
-                      (list :dateTime (format-time-string "%FT%TZ" (plist-get pair :start) t))))
-               (to (my/org-calendar-view--google-minute
-                    (list :dateTime (format-time-string "%FT%TZ" (plist-get pair :end) t)))))
-          (setq events (seq-remove (lambda (event)
-                                     (member (plist-get (org-timegrid-event-source event) :heading-marker)
-                                             (list marker block))) events))
-          (when (and (member state '("TODO" "DOING" "WAIT")) (< from end) (> to start))
-            (push (org-timegrid-event-create
-                   :id (list 'linked-task (plist-get task :key))
-                   :title (concat state " " (plist-get task :title))
-                   :start from :end to :all-day nil
-                   :color (face-foreground 'font-lock-string-face nil t)
-                   :source (my/org-calendar-view--source marker)) events))))
-      events)))
+    (nreverse result)))
 
 (defun my/org-calendar-view--deadlines (start end)
   "Show deadlines as labelled date-rail markers, never as reserved work time."
@@ -213,6 +187,40 @@
         (with-current-buffer buffer (org-timegrid--refresh-data))
       (error (message "Week view could not refresh: %s" (error-message-string err))))))
 
+(defconst my/org-calendar-view-keys
+  '(("j" . org-timegrid-cursor-forward)
+    ("k" . org-timegrid-cursor-backward)
+    ("h" . org-timegrid-cursor-backward-day)
+    ("l" . org-timegrid-cursor-forward-day)
+    ("w" . org-timegrid-next-block)
+    ("b" . org-timegrid-previous-block)
+    ("C-d" . org-timegrid-cursor-page-down)
+    ("C-u" . org-timegrid-cursor-page-up)
+    ("0" . org-timegrid-cursor-day-start)
+    ("$" . org-timegrid-cursor-day-end)
+    ("H" . org-timegrid-previous-week)
+    ("L" . org-timegrid-next-week)
+    ("[" . org-timegrid-previous-week)
+    ("]" . org-timegrid-next-week)
+    ("." . org-timegrid-goto-today)
+    ("D" . org-timegrid-goto-date)
+    ("r" . org-timegrid-refresh)
+    ("/" . org-timegrid-isearch-forward)
+    ("RET" . org-timegrid-open-at-cursor)
+    ("F" . my/org-calendar-view-filter)
+    ("?" . my/org-calendar-view-help)
+    ("q" . quit-window))
+  "Keys of the read-only week, in the order `my/org-calendar-view-help' lists them.")
+
+(defun my/org-calendar-view-help ()
+  "List the week view's keys."
+  (interactive)
+  (with-help-window "*Week keys*"
+    (princ "Read-only week (SPC n v)\n\n")
+    (pcase-dolist (`(,key . ,command) my/org-calendar-view-keys)
+      (princ (format "  %-5s %s\n" key
+                     (car (split-string (or (documentation command) (symbol-name command)) "\n")))))))
+
 ;;;###autoload
 (defun my/org-calendar-week ()
   "Open a read-only graphical week using central files and cached Google dates."
@@ -232,12 +240,13 @@
                  ":" "C-c C-q" "C-c C-t" "," "C-c ," "i" "O" "z" "C-c C-z"
                  "C-c C-x e" "C-c C-w" "$"))
     (keymap-set (current-local-map) key #'my/org-calendar-view-read-only))
-  (keymap-set (current-local-map) "[" #'org-timegrid-previous-week)
-  (keymap-set (current-local-map) "]" #'org-timegrid-next-week)
-  (keymap-set (current-local-map) "F" #'my/org-calendar-view-filter)
+  ;; Vim-style motion. The view stays in Emacs state, so these single keys
+  ;; reach the grid instead of evil; `?' lists them.
+  (pcase-dolist (`(,key . ,command) my/org-calendar-view-keys)
+    (keymap-set (current-local-map) key command))
   (when (fboundp 'evil-emacs-state) (evil-emacs-state))
   (when (fboundp 'my/org-calendar-auto--finish)
     (advice-add 'my/org-calendar-auto--finish :after #'my/org-calendar-view-refresh-visible))
-  (message "Read-only week: RET visits source; [ / ] change week; F filters; g shows today; q closes"))
+  (message "Read-only week: hjkl move, w/b next/previous event, H/L or [ ] week, RET visits, ? keys"))
 
 (provide 'org-calendar-view)

@@ -6,7 +6,6 @@
 (defvar epg-pinentry-mode)
 (defvar oauth2-auto-plstore)
 (defvar oauth2-auto-manually-auth)
-(defvar oauth2-auto-additional-providers-alist)
 (defvar org-gcal-client-id)
 (defvar org-gcal-client-secret)
 (load (expand-file-name "org-calendar-config.el"
@@ -31,72 +30,6 @@
 (declare-function oauth2-auto-refresh "oauth2-auto" (username provider plist))
 (declare-function oauth2-auto--plstore-read "oauth2-auto" (username provider))
 (declare-function oauth2-auto--plstore-write "oauth2-auto" (username provider plist))
-(declare-function oauth2-auto-authenticate "oauth2-auto" (username provider))
-(declare-function url-retrieve-synchronously "url" (url &optional silent inhibit-cookies timeout))
-(defvar url-http-response-status)
-(defvar url-request-extra-headers)
-
-(defun my/org-tasks-worker-provider ()
-  "Register a separate Tasks grant, never replace Calendar's provider or token."
-  (add-to-list 'oauth2-auto-additional-providers-alist
-               `(org-tasks
-                 (authorize_url . "https://accounts.google.com/o/oauth2/auth")
-                 (token_url . "https://oauth2.googleapis.com/token")
-                 (scope . "openid email https://www.googleapis.com/auth/tasks")
-                 (client_id . ,org-gcal-client-id)
-                 (client_secret . ,org-gcal-client-secret))))
-
-(defun my/org-tasks-worker-consent (original provider url-key keys parameters &optional quiet)
-  "Obtain an offline Tasks grant without changing Calendar's authorization flow."
-  (funcall original provider url-key keys
-           (if (eq provider 'org-tasks)
-               (append '((prompt . "consent select_account") (include_granted_scopes . "true")) parameters)
-             parameters)
-           quiet))
-
-(defun my/org-tasks-worker-check-account (account token)
-  "Verify TOKEN belongs to approved ACCOUNT before storing or exposing it."
-  (require 'url)
-  (let* ((url-request-extra-headers
-          `(("Authorization" . ,(concat "Bearer " (plist-get token :access-token)))))
-         (buffer (url-retrieve-synchronously
-                  "https://openidconnect.googleapis.com/v1/userinfo" t t 20)))
-    (unless buffer (error "Account verification unavailable"))
-    (unwind-protect
-        (with-current-buffer buffer
-          (unless (and (= (or url-http-response-status 0) 200)
-                       (progn (goto-char (point-min)) (re-search-forward "\r?\n\r?\n" nil t)))
-            (error "Account verification failed"))
-          (let ((info (json-parse-buffer :object-type 'plist)))
-            (unless (and (equal (plist-get info :email) account)
-                         (eq (plist-get info :email_verified) t))
-              (setq my/org-calendar-worker-failure-kind "authorization")
-              (error "Tasks account does not match approval"))))
-      (kill-buffer buffer))))
-
-(defun my/org-tasks-worker-token (account refresh-only &optional force)
-  "Authorize or quietly refresh Tasks for ACCOUNT, preserving Calendar's grant."
-  (unless (and (equal account my/org-calendar-approved-primary-id)
-               (my/org-calendar-configured-id-p account)
-               (not (string-suffix-p "@group.calendar.google.com" account)))
-    (setq my/org-calendar-worker-failure-kind "authorization")
-    (error "Tasks requires an approved personal account"))
-  (my/org-tasks-worker-provider)
-  (advice-add 'oauth2-auto--browser-request :around #'my/org-tasks-worker-consent)
-  (let* ((stored (oauth2-auto--plstore-read account 'org-tasks))
-         (token
-          (cond
-           (refresh-only
-            (unless (plist-get stored :refresh-token)
-              (setq my/org-calendar-worker-failure-kind "authorization")
-              (error "Explicit Tasks authorization required"))
-            (aio-wait-for (oauth2-auto-refresh account 'org-tasks stored)))
-           ((and (not force) (plist-get stored :refresh-token)
-                 (not (my/org-calendar-worker-needs-refresh-p stored))) stored)
-           ;; Explicit Tasks login can authorize again; background refresh cannot.
-           (t (aio-wait-for (oauth2-auto-authenticate account 'org-tasks))))))
-    (my/org-tasks-worker-check-account account token)
-    (oauth2-auto--plstore-write account 'org-tasks token)))
 
 (defun my/org-calendar-worker-read-token (original &rest arguments)
   "Classify store unlock errors separately from transient network failures."
@@ -140,12 +73,10 @@
          (settings (car arguments))
          (store (cadr arguments))
           (refresh-only (equal (nth 2 arguments) "refresh-only"))
-          (tasks (member (nth 2 arguments) '("tasks-login" "tasks-reauthorize" "tasks-refresh-only")))
           (keychain (equal (nth 3 arguments) "keychain"))
           (helper (nth 4 arguments))
           (passphrase nil))
      (setq command-line-args-left nil)
-    (when tasks (setq refresh-only (equal (nth 2 arguments) "tasks-refresh-only")))
     (unwind-protect
         (condition-case nil
              (progn
@@ -183,10 +114,7 @@
               ;; Encryption stays enabled; no passphrase is written to disk.
               (advice-add 'plstore-passphrase-callback-function :override
                           (lambda (&rest _) (copy-sequence passphrase)))
-              (let ((token (if tasks
-                               (apply #'my/org-tasks-worker-token my/org-calendar-approved-primary-id refresh-only
-                                      (when (equal (nth 2 arguments) "tasks-reauthorize") '(t)))
-                             (my/org-calendar-worker-token my/org-calendar-id refresh-only))))
+              (let ((token (my/org-calendar-worker-token my/org-calendar-id refresh-only)))
                 (unless (and (stringp (plist-get token :access-token))
                              (not (string-empty-p (plist-get token :access-token)))
                              (numberp (plist-get token :expiration))

@@ -329,6 +329,36 @@ variant back to the left. Unlocking the width allows a manual resize.
 (add-to-list 'default-frame-alist '(fullscreen . maximized))
 #+end_src
 
+The global capture shortcut opens Doom's capture frame. Every frame inherits
+=fullscreen . maximized= from above, so the capture frame asks for =fullscreen=
+nil, a comfortable size, and the centre of the monitor in use. Fractional
+=left=/=top= values land off-screen on a multi-monitor setup, so the position is
+computed in pixels when the frame opens.
+
+#+begin_src emacs-lisp
+(defvar my/org-capture-frame-size '(110 . 32)
+  "Columns and lines of the capture frame.")
+
+(defun my/org-capture-frame-parameters ()
+  "Return capture frame parameters centred on the current monitor."
+  (let* ((area (frame-monitor-workarea))
+         (cols (car my/org-capture-frame-size))
+         (lines (cdr my/org-capture-frame-size))
+         (pixel-width (* cols (frame-char-width)))
+         (pixel-height (* lines (frame-char-height))))
+    `((name . "doom-capture") (transient . t) (menu-bar-lines . 1)
+      (fullscreen . nil) (width . ,cols) (height . ,lines)
+      (left . ,(+ (nth 0 area) (max 0 (/ (- (nth 2 area) pixel-width) 2))))
+      (top . ,(+ (nth 1 area) (max 0 (/ (- (nth 3 area) pixel-height) 3)))))))
+
+(defun my/org-capture-frame-a (fn &rest args)
+  "Open the capture frame at `my/org-capture-frame-parameters'."
+  (let ((+org-capture-frame-parameters (my/org-capture-frame-parameters)))
+    (apply fn args)))
+
+(advice-add '+org-capture/open-frame :around #'my/org-capture-frame-a)
+#+end_src
+
 * Environment
 
 ** Emacs server
@@ -725,7 +755,7 @@ subscripts or link targets.
 Work and Personal are file categories, not TODO states. Quick tasks and notes
 live in =work.org= and =personal.org=. Events live in =calendar-work.org= and
 =calendar-personal.org=, which are excluded from the notes backup. Existing
-notes stay in place; the =l= agenda command is a separate migration view.
+notes stay in place.
 
 =SPC n d= opens Today; =SPC n r= opens Review, with Today above the other open
 tasks. Tasks already in Today are not repeated below; undated and future tasks
@@ -734,7 +764,7 @@ All-day event. Capture keeps
 Doom's existing popup. Dates are optional for tasks and required for events.
 Timed events ask for a start date/time and a duration (default =1h=), with a live
 end-time preview instead of a second date picker. Bare durations mean minutes.
-The cheatsheet is =~/Documents/org/org-agenda.org=.
+The cheatsheet is =~/Documents/org/notes/org-agenda.org=.
 Agenda styling borrows the category icons and quiet layout from
 [[https://github.com/psamim/dotfiles/blob/master/doom/config.el][psamim's configuration]], but keeps full task states, overdue warnings, and
 the sync status. Nerd Icons are display-only; terminal agendas keep text labels.
@@ -942,14 +972,18 @@ profile-labelled layout. Redraws preserve source actions and removable zoom.
   (propertize " " 'display `(space :align-to ,column)
               'my/org-agenda-column column))
 
+(defvar my/org-agenda-state-column 46
+  "Full-width agenda column of TODO states; titles start ten columns later.
+32 when category icons draw, 46 when the category is printed as text.")
+
 (defun my/org-agenda-heading-gap ()
   "Place task states and event titles in their own fixed agenda columns."
   (if (derived-mode-p 'org-agenda-mode)
       "" ; current-time / grid rows already start at the details column
     (my/org-agenda-column-gap
      (if (and (derived-mode-p 'org-mode) (org-get-todo-state))
-          (if my/org-agenda-compact 22 46)
-        (if my/org-agenda-compact 32 56)))))
+          (if my/org-agenda-compact 22 my/org-agenda-state-column)
+        (if my/org-agenda-compact 32 (+ 10 my/org-agenda-state-column))))))
 
 (defun my/org-agenda-today-prefix-format ()
   "Keep explicit labels without GUI icons; compact only the focused view."
@@ -1013,6 +1047,20 @@ profile-labelled layout. Redraws preserve source actions and removable zoom.
             (goto-char beg)
             (forward-line 1)))))))
 
+(defun my/org-agenda-align-tags ()
+  "Right-align each row's tags to the window's text edge, measured in pixels.
+Org pads tags by counting characters, which overflows once margins and Org
+Modern's wider tag chips are involved; a display space never does."
+  (save-excursion
+    (save-match-data
+      (with-silent-modifications
+        (goto-char (point-min))
+        (while (re-search-forward
+                "\\([ \t]+\\)\\(:\\(?:[[:alnum:]_@#%]+:\\)+\\)[ \t]*$" nil t)
+          (let ((width (+ (string-pixel-width (match-string 2)) (frame-char-width))))
+            (put-text-property (match-beginning 1) (match-end 1)
+                               'display `(space :align-to (- right (,width))))))))))
+
 (defun my/org-agenda-style-buffer ()
   "Style the agenda without rewriting rows, source markers, or keymaps."
   (when (derived-mode-p 'org-agenda-mode)
@@ -1036,20 +1084,41 @@ profile-labelled layout. Redraws preserve source actions and removable zoom.
                      (org-agenda-date-today :inherit default :height 1.0 :weight normal :slant normal)
                      (org-agenda-date-weekend :inherit default :height 1.0 :weight normal :slant normal)
                      (org-super-agenda-header :inherit default :height 1.0
-                                             :weight semibold :box nil :overline nil))))
+                                             :weight semibold :box nil :overline nil)
+                     ;; Overdue plans and coming deadlines are live work, so
+                     ;; they keep the normal ink instead of a disabled grey.
+                     (org-scheduled-previously :inherit default)
+                     (org-upcoming-deadline :inherit default))))
     (my/org-agenda-style-centering)
-    (my/org-agenda-style-now-rule)))
+    (my/org-agenda-style-now-rule)
+    (my/org-agenda-align-tags)))
 
 (defun my/org-configure-agenda-style ()
   "Configure a quiet agenda layout while preserving states and warning text."
   (setq org-agenda-category-icon-alist (my/org-agenda-category-icons)
+        my/org-agenda-state-column (if org-agenda-category-icon-alist 32 46)
+        ;; The icon already says Work or Personal; print the word only when a
+        ;; text terminal cannot draw it.
         org-agenda-prefix-format
-        '((agenda . " %i%(my/org-agenda-column-gap 4)%c%(my/org-agenda-column-gap 14)%-11t%(my/org-agenda-column-gap 27)%s%(my/org-agenda-heading-gap)")
-          (todo . " %i%(my/org-agenda-column-gap 4)%c%(my/org-agenda-heading-gap)")
-          (tags . " %i%(my/org-agenda-column-gap 4)%c%(my/org-agenda-heading-gap)")
-          (search . " %i%(my/org-agenda-column-gap 4)%c%(my/org-agenda-heading-gap)"))
-        ;; Org adds one normal space after this field, putting titles at 56.
-        org-agenda-todo-keyword-format (concat "%s" (my/org-agenda-column-gap 55))
+        (if org-agenda-category-icon-alist
+            '((agenda . " %i%(my/org-agenda-column-gap 4)%-11t%(my/org-agenda-column-gap 16)%s%(my/org-agenda-heading-gap)")
+              (todo . " %i%(my/org-agenda-heading-gap)")
+              (tags . " %i%(my/org-agenda-heading-gap)")
+              (search . " %i%(my/org-agenda-heading-gap)"))
+          '((agenda . " %i%(my/org-agenda-column-gap 4)%c%(my/org-agenda-column-gap 14)%-11t%(my/org-agenda-column-gap 27)%s%(my/org-agenda-heading-gap)")
+            (todo . " %i%(my/org-agenda-column-gap 4)%c%(my/org-agenda-heading-gap)")
+            (tags . " %i%(my/org-agenda-column-gap 4)%c%(my/org-agenda-heading-gap)")
+            (search . " %i%(my/org-agenda-column-gap 4)%c%(my/org-agenda-heading-gap)")))
+        ;; Org adds one normal space after this field, putting titles ten
+        ;; columns after the state.
+        org-agenda-todo-keyword-format
+        (concat "%s" (my/org-agenda-column-gap (+ 9 my/org-agenda-state-column)))
+        ;; `my/org-agenda-align-tags' places tags; Org only separates them.
+        org-agenda-tags-column 0
+        ;; A task both scheduled and due shows once, on its scheduled row.
+        org-agenda-skip-deadline-prewarning-if-scheduled t
+        ;; Subtasks are listed anyway; a dimmed parent read as an odd colour.
+        org-agenda-dim-blocked-tasks nil
         org-agenda-timerange-leaders '("" "Day %d of %d: ")
         org-agenda-deadline-leaders '("Due: " "Due in %d d: " "Due %d d. ago: ")
         ;; The ordinary day/week view should be as readable as Today.
@@ -1232,15 +1301,6 @@ profile-labelled layout. Redraws preserve source actions and removable zoom.
   (interactive)
   (org-capture nil "pt"))
 
-(defun my/org-capture-recommendation ()
-  "Capture a recommendation into the recommendations inbox."
-  (interactive)
-  (org-capture nil "pr"))
-
-(defun my/org-capture-reading ()
-  "Capture a link into the reading inbox."
-  (interactive)
-  (org-capture nil "r"))
 ;; END org-workflow
 
 (defun my/org-auto-revert-notes-h ()
@@ -1257,7 +1317,15 @@ profile-labelled layout. Redraws preserve source actions and removable zoom.
   ;; RESET_CHECK_BOXES clears the weekly and monthly review checklists on each repeat.
   (require 'org-checklist nil t))
 
+(after! org-modern
+  ;; Tag chips inherit `secondary-selection', whose :extend paints the chip
+  ;; colour past the line end into the window margins.
+  (set-face-attribute 'org-modern-tag nil :extend nil))
+
 (after! org-agenda
+  ;; Changing one row redraws only that row; re-place its tags.
+  (advice-add 'org-agenda-change-all-lines :after
+              (lambda (&rest _) (when (derived-mode-p 'org-agenda-mode) (my/org-agenda-align-tags))))
   ;; Org collects per-file keywords with `push', reversing the selector menu.
   (advice-add #'org-agenda-prepare :after #'my/org-order-agenda-keywords)
   (map! :map org-agenda-mode-map
@@ -1280,9 +1348,7 @@ profile-labelled layout. Redraws preserve source actions and removable zoom.
       :desc "Today" "n d" #'my/org-today
       :desc "Review all tasks" "n r" #'my/org-review
       :desc "Capture Work task" "n w" #'my/org-capture-work-task
-      :desc "Capture Personal task" "n p" #'my/org-capture-personal-task
-      :desc "Capture reading" "n R" #'my/org-capture-reading
-      :desc "Capture recommendation" "n e" #'my/org-capture-recommendation)
+      :desc "Capture Personal task" "n p" #'my/org-capture-personal-task)
 #+end_src
 
 ** Personal calendar sync
@@ -1302,30 +1368,31 @@ Agenda =, e= chooses occurrence/series edit scope; whole-series writes need appr
 =SPC n v= opens a separate read-only graphical week in the main window, not a
 popup. It combines central events, scheduled tasks, deadline date markers, and
 cached Google occurrences with pending occurrence changes. Deadlines do not
-reserve time; undated tasks remain in Review. =[= / =]= change weeks, =F= filters
-Both/Work/Personal, =RET= visits the source, =g= reloads and returns to today, and
+reserve time; undated tasks remain in Review. Keys are vim-style: =j=/=k= move
+through the day, =h=/=l= change day, =w=/=b= jump to the next/previous event,
+=H=/=L= (or =[= / =]=) change week, =.= returns to today, =D= picks a date, =F=
+filters Both/Work/Personal, =RET= visits the source, =?= lists every key, and
 =q= closes. =M-SPC= opens the Doom leader. A recurring occurrence visits its
 shared series heading; use agenda =, e= for an occurrence edit. The view needs
 graphical SVG support and uses a pinned =org-timegrid= with no mutation callbacks.
 
-Personal sync uses two named badges, =[Cal ✓] | [Tasks ✓]=, in agenda,
+Personal sync uses a named badge, =[Cal ✓]=, in agenda,
 graphical-week, source, and control buffers. Elsewhere they stay hidden unless
-an integration needs attention. Names and separate click targets remain visible
+an integration needs attention. The name and click target remain visible
 in every state. Native hover popups explain the reason and last successful sync;
-other hover help remains disabled. Click either badge or use =SPC n i= to open
+other hover help remains disabled. Click the badge or use =SPC n i= to open
 Integrations. Right-click offers direct actions without a nested submenu.
 
 The shared panel has clickable controls and keyboard actions: =c= Calendar,
-=t= Tasks, =s= sync selected, =a= authorize selected, =p= pause/resume, =d= details,
+=s= sync, =a= authorize, =p= pause/resume, =d= details,
 =g= refresh display only, and =q= close. It updates when sync status changes.
-Keychain setup and forgetting a saved unlock are in the same panel. Local
-time-block controls offer Link, Visit, and Unlink with an explicit task picker.
-There are no separate Calendar or Tasks shortcut trees.
+Keychain setup and forgetting a saved unlock are in the same panel.
+There is no separate Calendar shortcut tree.
 Opening the panel or a menu never syncs, saves source files, or starts sign-in.
-Paused sync cannot be bypassed. Both integrations remain Personal-only, even
+Paused sync cannot be bypassed. The integration remains Personal-only, even
 when the badges appear in a local Work calendar buffer.
 
-Tasks and Work events are not mapped to Google. Private settings, encrypted
+Work events are not mapped to Google. Private settings, encrypted
 tokens, and occurrence caches stay outside tracked repositories. Do not use raw
 =org-gcal-sync= / =org-gcal-fetch=: those bypass the automatic sync safeguards.
 Restart resumption and natural token expiry still need live verification.
@@ -1335,13 +1402,7 @@ personal calendar for the next 60 days, recurring events expanded, rewritten
 after every calendar save and every 10 minutes. It is not an agenda file. The
 phone gets this copy instead of =calendar-personal.org= (see the notes
 =.stignore=), so org-gcal stays the only writer of the synced file.
-Personal Google Tasks sync uses a separate private approval; Work-calendar
-integration is not connected. Tasks sync is off (=my/org-tasks-sync-enabled=)
-since Bloom on the phone took over tasks; set it to =t= to bring it back.
-Tasks authorization and read-only list inspection are available through
-Integrations (=SPC n i=), then Authorize Tasks. Setup adds a separate Tasks grant
-for the approved Personal account, without replacing Calendar's token. It does
-not upload or import tasks.
+Work-calendar integration is not connected. Tasks live in Bloom on the phone.
 See [[file:tests/README.md][Org workflow checks]] for safe regression-test commands.
 
 #+begin_src emacs-lisp
@@ -1415,21 +1476,7 @@ See [[file:tests/README.md][Org workflow checks]] for safe regression-test comma
 
 (autoload 'my/org-sync-open
   (expand-file-name "org-sync-ui.el" (file-name-directory my/org-calendar-auth-worker-file))
-  "Open Personal Calendar and Tasks integrations." t)
-
-(autoload 'my/org-tasks-setup
-  (expand-file-name "org-tasks-access.el" (file-name-directory my/org-calendar-auth-worker-file))
-  "Authorize Tasks and inspect existing lists without syncing." t)
-
-(dolist (command '(my/org-tasks-review my/org-tasks-sync-now my/org-tasks-mode))
-  (autoload command
-    (expand-file-name "org-tasks-sync.el" (file-name-directory my/org-calendar-auth-worker-file))
-    "Guarded Personal task sync controls." t))
-
-(dolist (command '(my/org-tasks-block-link my/org-tasks-block-unlink my/org-tasks-block-visit))
-  (autoload command
-    (expand-file-name "org-tasks-blocks.el" (file-name-directory my/org-calendar-auth-worker-file))
-    "Local, confirmed task/time-block display controls." t))
+  "Open the Personal Calendar integration." t)
 
 (defun my/org-calendar-session-ready-p ()
   "Return non-nil when this session has a token with a minute to spare."
@@ -1737,55 +1784,11 @@ See [[file:tests/README.md][Org workflow checks]] for safe regression-test comma
       (load (expand-file-name "org-calendar-phone.el" dir) nil t)
       (my/org-calendar-phone-mode 1))))
 
-(defvar my/org-tasks-sync-enabled nil
-  "Non-nil to sync Personal tasks with Google Tasks.
-Off since 27 Oct 2026: Bloom on the phone edits personal.org directly, so a
-second writer only caused Syncthing conflicts. Calendar events still sync.")
-
-(after! org
-  ;; A separate private approval pins the Personal account and existing Tasks list.
-  (let ((settings (expand-file-name "org-tasks.el" (file-name-directory my/org-calendar-settings-file))))
-    (when (and my/org-tasks-sync-enabled (file-readable-p settings))
-      (load (expand-file-name "org-tasks-sync.el" (file-name-directory my/org-calendar-auth-worker-file)) nil t)
-      (condition-case nil (my/org-tasks-mode 1)
-        (error (message "Personal Tasks automation awaits review; SPC n i opens Integrations")))
-      (when my/org-tasks--scope
-        (load (expand-file-name "org-tasks-blocks.el" (file-name-directory my/org-calendar-auth-worker-file)) nil t)
-        (my/org-tasks-block-mode 1)))))
-
 (after! org
   (load (expand-file-name "org-sync-ui.el" (file-name-directory my/org-calendar-auth-worker-file)) nil t)
   (my/org-sync-ui-install))
 
 #+end_src
-
-** Personal Tasks sync
-
-All saved Personal tasks in =personal.org= sync with the approved existing Google
-Tasks list. Phone-created tasks go under =Tasks/=; no opt-in tag or refile is needed.
-Work and private notes stay out. Shared fields are title, scheduled day, and
-completion. =DOING= and =WAIT= stay incomplete on the phone; Org times, durations,
-deadlines, and repeaters stay local. Historical Google completions are left out.
-Saving queues a cycle after two seconds; polling also runs every five minutes
-and when opening/redrawing the agenda. Unsaved edits are never sent or replaced.
-Conflicts, cancellation, and deletion need explicit choices in Integrations
-(=SPC n i=), then Tasks and Review issues. The panel also offers guarded sync,
-authorization, and pause/resume. Tasks has its own labeled badge and encrypted
-grant, using the existing Keychain unlock.
-The exact account/list approval and private JSON cache live outside Git.
-
-Some tasks created with a time in Google Calendar also expose a separate
-focus-time block. Google provides no reliable task/block identity link. After
-confirming a pair with Link in Integrations (=SPC n i=), Today/Review and the
-graphical week use the block's time on one task row. =RET= opens the task;
-Visit in the panel opens its Calendar source. Completion hides the combined row;
-reopening restores it. Unlink restores separate displays without changing either
-source or Google.
-Links live in private per-account/list/calendar JSON outside Git, not Org properties.
-No title-based matching or companion events are created. Date mismatches, local
-task times/repeaters, Calendar conflicts, and unsupported blocks stay separate.
-Change the time in the Calendar source; normal task scheduling still edits only
-the task. Google Tasks remains date-only.
 
 ** Showing images in the document
 
@@ -1905,7 +1908,6 @@ check its =pid= and confirm that backup has stopped before removing the lock.
   (cancel-timer my/org-backup-timer))
 (setq my/org-backup-timer (run-at-time 300 1800 #'my/org-backup))
 
-(map! :leader :desc "Backup org notes" "n B" #'my/org-backup)
 #+end_src
 
 ** Appearance

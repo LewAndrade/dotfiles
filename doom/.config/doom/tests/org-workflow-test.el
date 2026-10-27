@@ -155,7 +155,8 @@
 (ert-deftest my/org-workflow-capture-menu-and-event-separation ()
   (my/org-test-workspace
     (should (equal (mapcar #'car org-capture-templates)
-                   '("w" "wt" "wn" "we" "wa" "p" "pt" "pn" "pe" "pa")))
+                   '("w" "wt" "wn" "we" "wa" "p" "pt" "pn" "pe" "pa" "pr"
+                     "r" "b" "br" "bw" "bp")))
     (dolist (key '("we" "wa" "pe" "pa"))
       (let ((template (assoc key org-capture-templates)))
         (should (equal (car (nth 3 template)) 'file))
@@ -600,8 +601,11 @@
         (org-agenda nil "r")
         (should-not (my/org-agenda-focused-p))
         (goto-char (point-min)) (search-forward "Focus task")
+        ;; With icons, Review drops the category word: states at 32, titles at 42.
         (should (= (get-text-property (- (point) (length "Focus task") 2)
-                                     'my/org-agenda-column) 55))))))
+                                     'my/org-agenda-column) 41))
+        (should-not (string-match-p "Work" (buffer-substring-no-properties
+                                            (line-beginning-position) (line-end-position))))))))
 
 (ert-deftest my/org-agenda-focus-centering-is-idempotent-and-cleaned-before-mode-reset ()
   (skip-unless (require 'olivetti nil t))
@@ -800,15 +804,20 @@
   (let ((gap (my/org-agenda-column-gap 14)))
     (should (equal (substring-no-properties gap) " "))
     (should (equal (get-text-property 0 'display gap) '(space :align-to 14))))
-  (with-temp-buffer
-    (org-mode)
-    (insert "* TODO Task\n* Event\n")
-    (goto-char (point-min))
-    (should (= (get-text-property 0 'my/org-agenda-column (my/org-agenda-heading-gap)) 46))
-    (forward-line 1)
-    (should (= (get-text-property 0 'my/org-agenda-column (my/org-agenda-heading-gap)) 56))
-    (org-agenda-mode)
-    (should (equal (my/org-agenda-heading-gap) ""))))
+  ;; Text categories keep the wide layout; icon categories tighten it.
+  (pcase-dolist (`(,state-column ,title-column) '((46 56) (32 42)))
+    (let ((my/org-agenda-state-column state-column))
+      (with-temp-buffer
+        (org-mode)
+        (insert "* TODO Task\n* Event\n")
+        (goto-char (point-min))
+        (should (= (get-text-property 0 'my/org-agenda-column (my/org-agenda-heading-gap))
+                   state-column))
+        (forward-line 1)
+        (should (= (get-text-property 0 'my/org-agenda-column (my/org-agenda-heading-gap))
+                   title-column))
+        (org-agenda-mode)
+        (should (equal (my/org-agenda-heading-gap) ""))))))
 
 (ert-deftest my/org-agenda-style-times-statuses-states-and-titles-use-fixed-columns ()
   (my/org-test-workspace
