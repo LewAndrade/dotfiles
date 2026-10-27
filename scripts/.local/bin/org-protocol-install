@@ -33,4 +33,7 @@ EOF
 /usr/libexec/PlistBuddy -c "Add :CFBundleURLTypes:0:CFBundleURLSchemes:0 string org-protocol" "$PLIST"
 
 "$LSREGISTER" -f "$APP"
-echo "Registered $APP for org-protocol://"
+# Other apps claim the scheme too (emacs-plus ships "Emacs Client.app", which
+# opens captures in the main frame), so make this one the default handler.
+osascript -l JavaScript -e 'ObjC.import("CoreServices"); $.LSSetDefaultHandlerForURLScheme($("org-protocol"), $("com.lewandrade.org-protocol"))' >/dev/null
+echo "Registered $APP as the default handler for org-protocol://"
