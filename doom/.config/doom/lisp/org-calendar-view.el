@@ -187,6 +187,20 @@
         (with-current-buffer buffer (org-timegrid--refresh-data))
       (error (message "Week view could not refresh: %s" (error-message-string err))))))
 
+(defun my/org-calendar-view-next-event (&optional count)
+  "Select the next event, or say so when the week has none to move to."
+  (interactive "p")
+  (condition-case nil
+      (if (< (or count 1) 0)
+          (org-timegrid-previous-block)
+        (org-timegrid-next-block))
+    (wrong-type-argument (message "No event to move to"))))
+
+(defun my/org-calendar-view-previous-event ()
+  "Select the previous event, or say so when the week has none to move to."
+  (interactive)
+  (my/org-calendar-view-next-event -1))
+
 (defconst my/org-calendar-view-key-groups
   '(("Move"
      ("j" org-timegrid-cursor-forward "15 minutes later")
@@ -198,8 +212,8 @@
      ("0" org-timegrid-cursor-day-start "start of the day")
      ("$" org-timegrid-cursor-day-end "end of the day"))
     ("Events"
-     ("w" org-timegrid-next-block "next event")
-     ("b" org-timegrid-previous-block "previous event")
+     ("w" my/org-calendar-view-next-event "next event")
+     ("b" my/org-calendar-view-previous-event "previous event")
      ("RET" org-timegrid-open-at-cursor "open the event's Org entry")
      ("/" org-timegrid-isearch-forward "search event titles"))
     ("Weeks"

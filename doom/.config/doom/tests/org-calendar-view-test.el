@@ -132,6 +132,7 @@
           (pcase-dolist (`(,key . ,command) my/org-calendar-view-keys)
             (should (eq (key-binding (kbd key)) command)))
           (should (eq (key-binding (kbd "j")) #'org-timegrid-cursor-forward))
+          (should (eq (key-binding (kbd "w")) #'my/org-calendar-view-next-event))
           (should (eq (key-binding (kbd "$")) #'org-timegrid-cursor-day-end))
           (should (eq (key-binding (kbd "[")) #'org-timegrid-previous-week))
           (should (eq (key-binding (kbd "F")) #'my/org-calendar-view-filter))
