@@ -1,0 +1,33 @@
+#!/bin/sh
+# Build ~/Applications/OrgProtocol.app and register it as the macOS handler for
+# org-protocol:// links, so a browser bookmarklet can send pages to Emacs
+# capture. Emacs.app only registers mailto:. Safe to run again.
+set -eu
+
+APP="$HOME/Applications/OrgProtocol.app"
+EMACSCLIENT="${EMACSCLIENT:-/opt/homebrew/bin/emacsclient}"
+PLIST="$APP/Contents/Info.plist"
+LSREGISTER=/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister
+
+mkdir -p "$HOME/Applications"
+rm -rf "$APP"
+
+osacompile -o "$APP" <<EOF
+on open location theURL
+	do shell script "$EMACSCLIENT -n " & quoted form of theURL
+	tell application "Emacs" to activate
+end open location
+EOF
+
+/usr/libexec/PlistBuddy -c "Set :CFBundleIdentifier com.lewandrade.org-protocol" "$PLIST" 2>/dev/null \
+  || /usr/libexec/PlistBuddy -c "Add :CFBundleIdentifier string com.lewandrade.org-protocol" "$PLIST"
+# A background app: no Dock icon while it hands the URL over.
+/usr/libexec/PlistBuddy -c "Add :LSUIElement bool true" "$PLIST"
+/usr/libexec/PlistBuddy -c "Add :CFBundleURLTypes array" "$PLIST"
+/usr/libexec/PlistBuddy -c "Add :CFBundleURLTypes:0 dict" "$PLIST"
+/usr/libexec/PlistBuddy -c "Add :CFBundleURLTypes:0:CFBundleURLName string org-protocol" "$PLIST"
+/usr/libexec/PlistBuddy -c "Add :CFBundleURLTypes:0:CFBundleURLSchemes array" "$PLIST"
+/usr/libexec/PlistBuddy -c "Add :CFBundleURLTypes:0:CFBundleURLSchemes:0 string org-protocol" "$PLIST"
+
+"$LSREGISTER" -f "$APP"
+echo "Registered $APP for org-protocol://"

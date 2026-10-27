@@ -15,7 +15,7 @@ My configuration files, one GNU Stow package per tool. macOS only.
 | `fish`     | `~/.config/fish`                    | Shell. Plugins come from fisher, not from here.|
 | `starship` | `~/.config/starship.toml`           | Prompt.                                        |
 | `git`      | `~/.gitconfig`, `~/.config/git`     | Identity stays out of this repo. See below.    |
-| `scripts`  | `~/.local/bin`                      | `org-backup` commits and pushes my org notes. `everforest` switches the theme contrast. |
+| `scripts`  | `~/.local/bin`                      | `org-backup` commits and pushes my org notes. `org-protocol-install` registers browser capture into Emacs. `org-bookmarks-export` writes Chrome bookmarks from org. `everforest` switches the theme contrast. |
 
 ## Install
 

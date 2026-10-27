@@ -1,0 +1,95 @@
+#!/usr/bin/env python3
+"""Export org links to a Chrome bookmarks file, so org stays the source of truth.
+
+Each heading under a root becomes a folder, and each [[url][name]] link becomes
+a bookmark named "Folder: name", which Vimium's `b` finds by any word. The bar
+also gets the "Org capture" bookmarklet. Import the result in Chrome with
+Bookmarks > Import bookmarks and settings > Bookmarks HTML file.
+
+Usage: org-bookmarks-export [OUTPUT]   (default ~/Downloads/bookmarks-from-org.html)
+"""
+import html
+import os
+import re
+import sys
+
+ORG = os.path.expanduser("~/Documents/org")
+# (file, heading that holds the links, folder name in Chrome)
+ROOTS = [
+    ("work.org", "Links", "Work"),
+    ("bookmarks.org", None, "Tech"),
+]
+CAPTURE = ("javascript:location.href='org-protocol://capture?url='"
+           "+encodeURIComponent(location.href)+'&title='"
+           "+encodeURIComponent(document.title)+'&body='"
+           "+encodeURIComponent(window.getSelection())")
+LINK = re.compile(r"\[\[(https?://[^\]]+)\]\[([^\]]+)\]\]")
+HEADING = re.compile(r"^(\*+) (.+?)\s*$")
+
+
+def tree(path, root):
+    """Return nested (name, links, children) for the headings below ROOT."""
+    lines = open(os.path.join(ORG, path), encoding="utf-8").read().splitlines()
+    top = {"name": None, "links": [], "children": []}
+    stack = [(0, top)]
+    base = 0 if root is None else None
+    for line in lines:
+        m = HEADING.match(line)
+        if m:
+            level, title = len(m.group(1)), m.group(2)
+            if base is None:
+                if title == root:
+                    base = level
+                continue
+            if level <= base:
+                if root is not None:
+                    break
+            node = {"name": title, "links": [], "children": []}
+            while stack[-1][0] >= level:
+                stack.pop()
+            stack[-1][1]["children"].append(node)
+            stack.append((level, node))
+            continue
+        if base is None:
+            continue
+        for url, name in LINK.findall(line):
+            stack[-1][1]["links"].append((url, name))
+    return top
+
+
+def render(node, out, depth):
+    pad = "    " * depth
+    for url, name in node["links"]:
+        label = f"{node['name']}: {name}" if node["name"] else name
+        out.append(f'{pad}<DT><A HREF="{html.escape(url)}">{html.escape(label)}</A>')
+    for child in node["children"]:
+        if not child["links"] and not child["children"]:
+            continue
+        out.append(f"{pad}<DT><H3>{html.escape(child['name'])}</H3>")
+        out.append(f"{pad}<DL><p>")
+        render(child, out, depth + 1)
+        out.append(f"{pad}</DL><p>")
+
+
+def main():
+    target = os.path.expanduser(sys.argv[1] if len(sys.argv) > 1
+                                else "~/Downloads/bookmarks-from-org.html")
+    out = ["<!DOCTYPE NETSCAPE-Bookmark-file-1>",
+           '<META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=UTF-8">',
+           "<TITLE>Bookmarks</TITLE>", "<H1>Bookmarks</H1>", "<DL><p>",
+           '<DT><H3 PERSONAL_TOOLBAR_FOLDER="true">Bookmarks bar</H3>', "<DL><p>",
+           f'    <DT><A HREF="{html.escape(CAPTURE)}">Org capture</A>']
+    for path, root, folder in ROOTS:
+        out.append(f"    <DT><H3>{folder}</H3>")
+        out.append("    <DL><p>")
+        render(tree(path, root), out, 2)
+        out.append("    </DL><p>")
+    out += ["</DL><p>", "</DL><p>"]
+    with open(target, "w", encoding="utf-8") as f:
+        f.write("\n".join(out) + "\n")
+    count = sum(line.count("<A HREF") for line in out)
+    print(f"Wrote {count} bookmarks to {target}")
+
+
+if __name__ == "__main__":
+    main()

@@ -1129,7 +1129,8 @@ profile-labelled layout. Redraws preserve source actions and removable zoom.
 (defun my/org-configure-workflow ()
   "Configure central capture files, task states, and explicit agenda views."
   (let ((work (my/org-file "work.org"))
-        (personal (my/org-file "personal.org")))
+        (personal (my/org-file "personal.org"))
+        (reading (my/org-file "reading.org")))
     (setq org-agenda-files (append (my/org-profile-files "work")
                                    (my/org-profile-files "personal"))
           org-default-notes-file personal
@@ -1176,7 +1177,17 @@ profile-labelled layout. Redraws preserve source actions and removable zoom.
               "* %?\n:org-gcal:\n%(my/org-capture-timed-range)\n:END:\n" :empty-lines 1)
             ("pa" "All-day event (auto-sync)" entry
              (file ,(my/org-file "calendar-personal.org"))
-             "* %?\n:org-gcal:\n%(my/org-capture-all-day-range)\n:END:\n" :empty-lines 1))
+             "* %?\n:org-gcal:\n%(my/org-capture-all-day-range)\n:END:\n" :empty-lines 1)
+            ("r" "Reading: paste a link" item (file+headline ,reading "Inbox")
+             "- [ ] %?")
+            ;; Filled by the browser bookmarklet through org-protocol.
+            ("b" "From the browser")
+            ("br" "Reading" item (file+headline ,reading "Inbox")
+             "- [ ] [[%:link][%:description]]%?")
+            ("bw" "Work task" entry (file+headline ,work "Inbox")
+             "* TODO %?\n[[%:link][%:description]]\n%i\n" :empty-lines 1)
+            ("bp" "Personal task" entry (file+headline ,personal "Inbox")
+             "* TODO %?\n[[%:link][%:description]]\n%i\n" :empty-lines 1))
           org-agenda-custom-commands
            `(("d" "Today" agenda ""
               ((org-agenda-overriding-header ,(propertize "Today" 'my/org-focused-today t))
@@ -1191,12 +1202,7 @@ profile-labelled layout. Redraws preserve source actions and removable zoom.
             ("w" "Work review" ,(my/org-review-blocks)
              ((org-agenda-files ',(my/org-profile-files "work"))))
             ("p" "Personal review" ,(my/org-review-blocks)
-             ((org-agenda-files ',(my/org-profile-files "personal"))))
-            ("l" "Old tasks: review and refile" alltodo ""
-             ((org-agenda-files ',(mapcar #'my/org-file
-                                         '("notes.org" "career.org" "work/brl-cash-returns.org")))
-              (org-super-agenda-groups nil)
-               (org-agenda-overriding-header "Old tasks: refile relevant entries into Work or Personal")))))
+             ((org-agenda-files ',(my/org-profile-files "personal"))))))
     (my/org-configure-agenda-style)))
 
 (defun my/org-today ()
@@ -1220,9 +1226,26 @@ profile-labelled layout. Redraws preserve source actions and removable zoom.
   "Capture a task directly into the Personal inbox."
   (interactive)
   (org-capture nil "pt"))
+
+(defun my/org-capture-reading ()
+  "Capture a link into the reading inbox."
+  (interactive)
+  (org-capture nil "r"))
 ;; END org-workflow
 
-(after! org (my/org-configure-workflow))
+(defun my/org-auto-revert-notes-h ()
+  "Reload a notes file when Syncthing changes it, for example from Bloom on the phone."
+  (when (and buffer-file-name
+             (file-in-directory-p buffer-file-name org-directory))
+    (auto-revert-mode 1)))
+
+(after! org
+  (my/org-configure-workflow)
+  (add-hook 'org-mode-hook #'my/org-auto-revert-notes-h)
+  ;; The OrgProtocol app hands org-protocol:// URLs from the browser to this server.
+  (require 'org-protocol)
+  ;; RESET_CHECK_BOXES clears the weekly and monthly review checklists on each repeat.
+  (require 'org-checklist nil t))
 
 (after! org-agenda
   ;; Org collects per-file keywords with `push', reversing the selector menu.
@@ -1247,7 +1270,8 @@ profile-labelled layout. Redraws preserve source actions and removable zoom.
       :desc "Today" "n d" #'my/org-today
       :desc "Review all tasks" "n r" #'my/org-review
       :desc "Capture Work task" "n w" #'my/org-capture-work-task
-      :desc "Capture Personal task" "n p" #'my/org-capture-personal-task)
+      :desc "Capture Personal task" "n p" #'my/org-capture-personal-task
+      :desc "Capture reading" "n R" #'my/org-capture-reading)
 #+end_src
 
 ** Personal calendar sync
@@ -1575,7 +1599,7 @@ See [[file:tests/README.md][Org workflow checks]] for safe regression-test comma
 (defun my/org-calendar-prepare ()
   "Load local credentials and configure only the explicitly approved calendar."
   (unless (file-readable-p my/org-calendar-settings-file)
-    (user-error "Configure %s first; see org-agenda.org" my/org-calendar-settings-file))
+    (user-error "Configure %s first; see notes/org-agenda.org" my/org-calendar-settings-file))
   (load my/org-calendar-settings-file nil t)
   (unless (and (my/org-calendar-configured-id-p my/org-calendar-id)
                (stringp (bound-and-true-p org-gcal-client-id))
