@@ -1439,6 +1439,10 @@ Work events are not mapped to Google. Private settings, encrypted
 tokens, and occurrence caches stay outside tracked repositories. Do not use raw
 =org-gcal-sync= / =org-gcal-fetch=: those bypass the automatic sync safeguards.
 Restart resumption and natural token expiry still need live verification.
+Today and Review open with org-timegrid's timeline strip: the hours around now,
+drawn from the same data as the week view, so Google repeats appear. =RET= on it
+opens the week view.
+
 Bloom on the phone cannot expand Google's recurrence rules, so
 =lisp/org-calendar-phone.el= keeps =calendar-phone.org=: a read-only copy of the
 personal calendar for the next 60 days, recurring events expanded, rewritten
@@ -1813,6 +1817,26 @@ See [[file:tests/README.md][Org workflow checks]] for safe regression-test comma
       :desc "Integrations" "n i" #'my/org-sync-open
       :desc "Visual week (read only)" "n v" #'my/org-calendar-week)
 
+(defun my/org-agenda-strip-backend-a (fn &rest args)
+  "Draw org-timegrid's agenda strip from the week view's data, repeats included."
+  (let ((org-timegrid-org-backend my/org-calendar-view--backend))
+    (apply fn args)))
+
+(defun my/org-agenda-strip-setup ()
+  "Show org-timegrid's timeline strip at the top of graphical agendas.
+It reads the read-only week view's backend, so Google repeats appear, and runs
+after `my/org-agenda-style-buffer' so it fits Today's centred column."
+  (when (and (display-graphic-p) (require 'org-timegrid-agenda nil t))
+    (setq org-timegrid-agenda-insert-after nil
+          org-timegrid-agenda-separator nil)
+    (advice-add 'org-timegrid-agenda-insert :around #'my/org-agenda-strip-backend-a)
+    (org-timegrid-agenda-mode 1)
+    ;; The mode adds its insert at the default depth; after the agenda style is later.
+    (remove-hook 'org-agenda-finalize-hook #'org-timegrid-agenda-insert)
+    (add-hook 'org-agenda-finalize-hook #'org-timegrid-agenda-insert 95)
+    (keymap-set org-timegrid-agenda-map "RET" #'my/org-calendar-week)
+    (define-key org-timegrid-agenda-map [mouse-1] #'my/org-calendar-week)))
+
 (after! org
   (load (expand-file-name "org-calendar-keychain.el" (file-name-directory my/org-calendar-auth-worker-file)) nil t)
   (load (expand-file-name "org-calendar-auto.el" (file-name-directory my/org-calendar-auth-worker-file)) nil t)
@@ -1825,7 +1849,8 @@ See [[file:tests/README.md][Org workflow checks]] for safe regression-test comma
     (let ((dir (file-name-directory my/org-calendar-auth-worker-file)))
       (load (expand-file-name "org-calendar-view.el" dir) nil t)
       (load (expand-file-name "org-calendar-phone.el" dir) nil t)
-      (my/org-calendar-phone-mode 1))))
+      (my/org-calendar-phone-mode 1)
+      (my/org-agenda-strip-setup))))
 
 (after! org
   (load (expand-file-name "org-sync-ui.el" (file-name-directory my/org-calendar-auth-worker-file)) nil t)
