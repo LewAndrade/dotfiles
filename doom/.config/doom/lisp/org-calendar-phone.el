@@ -10,6 +10,7 @@
 (require 'calendar)
 (require 'subr-x)
 (declare-function my/org-file "config" (name))
+(declare-function my/org-background-call "org-calendar-config" (fn &rest args))
 ;; Loaded by config.org from org-calendar-view.el, which is not on `load-path'.
 (declare-function my/org-calendar-view--org-events "org-calendar-view" (start end))
 (declare-function my/org-calendar-view--occurrences "org-calendar-view" (start end))
@@ -86,11 +87,13 @@
     events "")))
 
 (defun my/org-calendar-phone-export ()
-  "Write `calendar-phone.org' when its contents change. Never touches the network."
+  "Write `calendar-phone.org' when its contents change. Never touches the network.
+Org files it has to open are closed again, so the timer leaves no buffers behind."
   (interactive)
   (condition-case err
       (let* ((file (my/org-calendar-phone--file))
-             (content (my/org-calendar-phone--render (my/org-calendar-phone--events)))
+             (content (my/org-calendar-phone--render
+                       (my/org-background-call #'my/org-calendar-phone--events)))
              (old (and (file-readable-p file)
                        (with-temp-buffer (insert-file-contents file) (buffer-string)))))
         ;; An unchanged file is left alone, so Syncthing has nothing to send.

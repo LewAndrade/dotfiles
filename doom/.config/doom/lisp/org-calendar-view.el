@@ -10,6 +10,7 @@
 (declare-function set-popup-rule! "doom-ui-popup" (predicate &rest plist))
 
 (declare-function my/org-file "config" (name))
+(declare-function my/org-quietly "org-calendar-config" (fn &rest args))
 (declare-function my/org-calendar-repeat--effective-events "org-calendar-repeat" ())
 (declare-function my/org-calendar-repeat--series-marker "org-calendar-repeat" (id))
 (declare-function my/org-calendar-repeat--ensure-state "org-calendar-repeat" ())
@@ -99,7 +100,7 @@ work, plus a `:heading-marker' for visiting and filtering."
   (let (events)
     (dolist (file (mapcar #'my/org-file '("work.org" "personal.org")))
       (when (file-readable-p file)
-        (with-current-buffer (find-file-noselect file)
+        (with-current-buffer (my/org-quietly #'find-file-noselect file)
           (org-with-wide-buffer
            (save-excursion
              (org-element-map (org-element-parse-buffer) 'headline

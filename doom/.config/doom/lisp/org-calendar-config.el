@@ -21,12 +21,34 @@ Leave nil to allow secondary calendars only. Never use the alias `primary'.")
 (defvar my/org-background-buffers nil
   "File buffers that background sync opened and nobody has looked at since.")
 
+(defvar persp-add-buffer-on-find-file)
+
+(defun my/org-quietly (fn &rest args)
+  "Call FN with ARGS, keeping files it opens out of workspaces and recent files.
+Timers, the agenda and the week view read Org files in the background; those
+buffers should not join the buffers you switch between. Switching to one later
+adds it as usual."
+  (let ((persp-add-buffer-on-find-file nil)
+        (find-file-hook (remq 'recentf-track-opened-file find-file-hook)))
+    (apply fn args)))
+
 (defun my/org-background-buffer (file)
   "Return the buffer visiting FILE, remembering it if we had to open it."
   (or (get-file-buffer file)
-      (let ((buffer (find-file-noselect file)))
+      (let ((buffer (my/org-quietly #'find-file-noselect file)))
         (cl-pushnew buffer my/org-background-buffers)
         buffer)))
+
+(defun my/org-background-call (fn &rest args)
+  "Call FN with ARGS quietly, then close the file buffers it opened.
+A buffer stays open when `my/org-background-release' says someone may need it."
+  (let ((before (buffer-list)))
+    (unwind-protect (apply #'my/org-quietly fn args)
+      (dolist (buffer (buffer-list))
+        (when-let* (((not (memq buffer before)))
+                    (file (buffer-file-name buffer)))
+          (cl-pushnew buffer my/org-background-buffers)
+          (my/org-background-release file))))))
 
 (defun my/org-background-release (file)
   "Kill FILE's buffer if background sync opened it and no one has used it.

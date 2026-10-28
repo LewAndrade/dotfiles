@@ -1995,6 +1995,12 @@ after `my/org-agenda-style-buffer' so it fits Today's centred column."
       (my/org-calendar-phone-mode 1)
       (my/org-agenda-strip-setup))))
 
+;; The agenda, the agenda strip and the week view open Org files behind your
+;; back. Keep those buffers out of the workspace and recent files.
+(after! org
+  (advice-add 'org-get-agenda-file-buffer :around #'my/org-quietly)
+  (advice-add 'org-timegrid-org--list-events :around #'my/org-quietly))
+
 (after! org
   (load (expand-file-name "org-sync-ui.el" (file-name-directory my/org-calendar-auth-worker-file)) nil t)
   (my/org-sync-ui-install))
